@@ -1,8 +1,8 @@
 const std = @import("std");
 const c = @import("clibs.zig");
 
-const Engine = @import("VulkanEngine.zig");
-const check_vk = @import("vulkan_init.zig").check_vk;
+const Engine = @import("vkEngine.zig");
+const check_vk = @import("vkInit.zig").check_vk;
 
 const log = std.log.scoped(.textures);
 

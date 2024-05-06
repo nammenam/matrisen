@@ -1,5 +1,5 @@
 const std = @import("std");
-const AllocatedBuffer = @import("VulkanEngine.zig").AllocatedBuffer;
+const AllocatedBuffer = @import("vkEngine.zig").AllocatedBuffer;
 const m3d = @import("math3d.zig");
 const c = @import("clibs.zig");
 
@@ -9,7 +9,6 @@ const Vec3 = m3d.Vec3;
 pub const VertexInputDescription = struct {
     bindings: []const c.VkVertexInputBindingDescription,
     attributes: []const c.VkVertexInputAttributeDescription,
-
     flags: c.VkPipelineVertexInputStateCreateFlags = 0,
 };
 
@@ -61,7 +60,7 @@ pub const Mesh = struct {
     vertex_buffer: AllocatedBuffer = undefined,
 };
 
-const obj_loader = @import("obj_loader.zig");
+const obj_loader = @import("objLoader.zig");
 
 pub fn load_from_obj(a: std.mem.Allocator, filepath: []const u8) Mesh {
     var obj_mesh = obj_loader.parse_file(a, filepath) catch |err| {

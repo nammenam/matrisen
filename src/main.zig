@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const VulkanEngine = @import("VulkanEngine.zig");
+const VulkanEngine = @import("vkEngine_new.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -9,8 +9,12 @@ pub fn main() !void {
     };
 
     var cwd_buff: [1024]u8 = undefined;
-    const cwd = try std.process.getCwd(&cwd_buff);
-    std.log.info("Running from: {s}", .{ cwd });
+    const cwd = std.process.getCwd(&cwd_buff) catch |err| {
+        std.debug.print("Unable to get current working directory: {}\n", .{err});
+        return err;
+    };
+
+    std.log.info("Running from: {s} with PID: {!}\n", .{ cwd, std.os.linux.getpid() });
 
     var engine = VulkanEngine.init(gpa.allocator());
     defer engine.cleanup();

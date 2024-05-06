@@ -10,32 +10,29 @@ pub fn build(b: *std.Build) void {
         .target = b.host,
         .optimize = optimize,
     });
-
+    exe.linkLibCpp();
+    exe.linkLibC();
 
     exe.linkSystemLibrary("SDL3");    
     exe.linkSystemLibrary("vulkan");
+
     exe.addCSourceFile(.{ .file = .{ .path = "src/vk_mem_alloc.cpp" }, .flags = &.{ "" } });
-    exe.addIncludePath(.{ .path = "thirdparty/vma/" });
     exe.addCSourceFile(.{ .file = .{ .path = "src/stb_image.c" }, .flags = &.{ "" } });
-    exe.addIncludePath(.{ .path = "thirdparty/stb/" });
+
     exe.addIncludePath(.{ .path = "thirdparty/imgui/" });
 
-    exe.linkLibCpp();
 
     compile_all_shaders(b, exe);
 
-
-
-    // Imgui (with cimgui and vulkan + sdl3 backends)
     const imgui_lib = b.addStaticLibrary(.{
         .name = "cimgui",
         .target = b.host,
         .optimize = optimize,
     });
-    imgui_lib.addIncludePath(.{ .path = "thirdparty/imgui/" });
-    imgui_lib.linkLibCpp();
-    imgui_lib.linkSystemLibrary("SDL3");
     imgui_lib.linkLibC();
+    imgui_lib.linkLibCpp();
+    imgui_lib.addIncludePath(.{ .path = "thirdparty/imgui/" });
+    imgui_lib.linkSystemLibrary("SDL3");
     imgui_lib.addCSourceFiles(.{
         .files = &.{
             "thirdparty/imgui/imgui.cpp",
@@ -51,7 +48,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     exe.linkLibrary(imgui_lib);
-    exe.linkLibC();
+
 
     const run_cmd = b.addRunArtifact(exe);
 
@@ -74,10 +71,18 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    const install_docs = b.addInstallDirectory(.{
+        .source_dir = exe.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+
+    const docs_step = b.step("docs", "Copy documentation artifacts to prefix path");
+    docs_step.dependOn(&install_docs.step);
 }
 
 fn compile_all_shaders(b: *std.Build, exe: *std.Build.Step.Compile) void {
-    // This is a fix for a change between zig 0.11 and 0.12
 
     const shaders_dir = if (@hasDecl(@TypeOf(b.build_root.handle), "openIterableDir"))
         b.build_root.handle.openIterableDir("shaders", .{}) catch @panic("Failed to open shaders directory")
