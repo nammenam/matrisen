@@ -2,10 +2,11 @@
 .{
     .name = "zzz",
     .version = "0.0.1",
+    .paths = .{""},
     .dependencies = .{
         .cimgui = .{
-            .url = "https://github.com/cimgui/cimgui/archive/refs/heads/docking_inter.zip",
-            .hash = "1220002d24d73672fe8b1e39717c0671598acc8ec27b8af2e1caf623a4fd0ce0d1bd",
+            .url = "https://github.com/cimgui/cimgui/archive/refs/heads/docking_inter.tar.gz",
+            .hash = "12208d5754897725c36b0a79b12cd6f64f41397bc3148ce170b71d35cc9f10786a35",
         },
     }
 }

@@ -1,5 +1,5 @@
 const std = @import("std");
-const AllocatedBuffer = @import("vkEngine.zig").AllocatedBuffer;
+const AllocatedBuffer = @import("vkEngine_old.zig").AllocatedBuffer;
 const m3d = @import("math3d.zig");
 const c = @import("clibs.zig");
 
@@ -83,7 +83,7 @@ pub fn load_from_obj(a: std.mem.Allocator, filepath: []const u8) Mesh {
                 const pos = obj_mesh.vertices[obj_index.vertex];
                 const nml = obj_mesh.normals[obj_index.normal];
                 const uvs = obj_mesh.uvs[obj_index.uv];
-                
+
                 const vx = Vertex{
                     .position = Vec3.make(pos[0], pos[1], pos[2]),
                     .normal = Vec3.make(nml[0], nml[1], nml[2]),

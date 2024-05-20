@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const VulkanEngine = @import("vkEngine_new.zig");
+const VulkanEngine = @import("vkEngine.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

@@ -1,11 +1,3 @@
-//! Vulkan initialization and utility functions.
-//! This module provides a high-level interface to the Vulkan API.
-//! It is designed to be used in conjunction with the `clibs.zig` module.
-//! The module provides functions for creating a Vulkan instance, selecting a physical device, creating a logical device, and creating a swapchain.
-//! The module also provides a function for checking the result of Vulkan API calls.
-//! The module is designed to be used in conjunction with the `clibs.zig` module, which provides low-level bindings to the Vulkan API.
-//! The module is designed to be used in conjunction with the `clibs.zig` module, which provides low-level bindings to the Vulkan API.
-
 const std = @import("std");
 const c = @import("clibs.zig");
 const log = std.log.scoped(.vkInit);
@@ -20,38 +12,6 @@ pub const VkiInstanceOpts = struct {
     debug_callback: c.PFN_vkDebugUtilsMessengerCallbackEXT = null,
     required_extensions: []const [*c]const u8 = &.{},
     alloc_cb: ?*c.VkAllocationCallbacks = null,
-};
-
-const SwapchainSupportInfo = struct {
-    capabilities: c.VkSurfaceCapabilitiesKHR = undefined,
-    formats: []c.VkSurfaceFormatKHR = &.{},
-    present_modes: []c.VkPresentModeKHR = &.{},
-
-    fn init(a: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) !SwapchainSupportInfo {
-        var capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
-        try check_vk(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &capabilities));
-
-        var format_count: u32 = undefined;
-        try check_vk(c.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, null));
-        const formats = try a.alloc(c.VkSurfaceFormatKHR, format_count);
-        try check_vk(c.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, formats.ptr));
-
-        var present_mode_count: u32 = undefined;
-        try check_vk(c.vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, null));
-        const present_modes = try a.alloc(c.VkPresentModeKHR, present_mode_count);
-        try check_vk(c.vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, present_modes.ptr));
-
-        return .{
-            .capabilities = capabilities,
-            .formats = formats,
-            .present_modes = present_modes,
-        };
-    }
-
-    fn deinit(self: *const SwapchainSupportInfo, a: std.mem.Allocator) void {
-        a.free(self.formats);
-        a.free(self.present_modes);
-    }
 };
 
 pub const Instance = struct {
@@ -321,7 +281,15 @@ pub const PhysicalDevice = struct {
     }
 };
 
-pub ciiiibhmonst Device = struct {
+const DeviceCreateOpts = struct {
+    physical_device: PhysicalDevice,
+    extensions: []const [*c]const u8 = &.{},
+    features: ?c.VkPhysicalDeviceFeatures = null,
+    alloc_cb: ?*const c.VkAllocationCallbacks = null,
+    pnext: ?*const anyopaque = null,
+};
+
+pub const Device = struct {
     handle: c.VkDevice = null,
     graphics_queue: c.VkQueue = null,
     present_queue: c.VkQueue = null,
@@ -350,10 +318,6 @@ pub ciiiibhmonst Device = struct {
             }));
         }
 
-        const device_extensions: []const [*c]const u8 = &.{
-            "VK_KHR_swapchain",
-        };
-
         const device_info = std.mem.zeroInit(c.VkDeviceCreateInfo, .{
             .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
             .pNext = opts.pnext,
@@ -361,9 +325,9 @@ pub ciiiibhmonst Device = struct {
             .pQueueCreateInfos = queue_create_infos.items.ptr,
             .enabledLayerCount = 0,
             .ppEnabledLayerNames = null,
-            .enabledExtensionCount = @as(u32, @intCast(device_extensions.len)),
-            .ppEnabledExtensionNames = device_extensions.ptr,
-            .pEnabledFeatures = &opts.features,
+            .enabledExtensionCount = @as(u32, @intCast(opts.extensions.len)),
+            .ppEnabledExtensionNames = opts.extensions.ptr,
+            .pEnabledFeatures = if (opts.features) |capture| &capture else null,
         });
 
         var device: c.VkDevice = undefined;
@@ -388,14 +352,38 @@ pub ciiiibhmonst Device = struct {
     }
 };
 
-const DeviceCreateOpts = struct {
-    physical_device: PhysicalDevice,
-    features: c.VkPhysicalDeviceFeatures = undefined,
-    alloc_cb: ?*const c.VkAllocationCallbacks = null,
-    pnext: ?*const anyopaque = null,
+const SwapchainSupportInfo = struct {
+    capabilities: c.VkSurfaceCapabilitiesKHR = undefined,
+    formats: []c.VkSurfaceFormatKHR = &.{},
+    present_modes: []c.VkPresentModeKHR = &.{},
+
+    fn init(a: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) !SwapchainSupportInfo {
+        var capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
+        try check_vk(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &capabilities));
+
+        var format_count: u32 = undefined;
+        try check_vk(c.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, null));
+        const formats = try a.alloc(c.VkSurfaceFormatKHR, format_count);
+        try check_vk(c.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, formats.ptr));
+
+        var present_mode_count: u32 = undefined;
+        try check_vk(c.vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, null));
+        const present_modes = try a.alloc(c.VkPresentModeKHR, present_mode_count);
+        try check_vk(c.vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, present_modes.ptr));
+
+        return .{
+            .capabilities = capabilities,
+            .formats = formats,
+            .present_modes = present_modes,
+        };
+    }
+
+    fn deinit(self: *const SwapchainSupportInfo, a: std.mem.Allocator) void {
+        a.free(self.formats);
+        a.free(self.present_modes);
+    }
 };
 
-/// Options for creating a swapchain.
 pub const SwapchainCreateOpts = struct {
     physical_device: c.VkPhysicalDevice,
     graphics_queue_family: u32,
@@ -410,7 +398,6 @@ pub const SwapchainCreateOpts = struct {
     alloc_cb: ?*c.VkAllocationCallbacks = null,
 };
 
-/// Creation needs to be done through init.
 pub const Swapchain = struct {
     handle: c.VkSwapchainKHR = null,
     images: []c.VkImage = &.{},
@@ -424,7 +411,7 @@ pub const Swapchain = struct {
 
         const format = pick_format(support_info.formats, opts);
         const present_mode = pick_present_mode(support_info.present_modes, opts);
-        log.info("Selected swapchain format: {d}, present mode: {d}", .{format, present_mode});
+        log.info("Selected swapchain format: {d}, present mode: {d}", .{ format, present_mode });
         const extent = make_extent(support_info.capabilities, opts);
 
         const image_count = blk: {
@@ -443,7 +430,7 @@ pub const Swapchain = struct {
             .imageColorSpace = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
             .imageExtent = extent,
             .imageArrayLayers = 1,
-            .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             .preTransform = support_info.capabilities.currentTransform,
             .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
             .presentMode = present_mode,
