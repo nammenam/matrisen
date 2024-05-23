@@ -96,7 +96,6 @@ fn compile_all_shaders(b: *std.Build, exe: *std.Build.Step.Compile) void {
             if (std.mem.eql(u8, ext, ".glsl")) {
                 const basename = std.fs.path.basename(entry.name);
                 const name = basename[0..basename.len - ext.len];
-
                 std.debug.print("found shader file to compile: {s}. compiling with name: {s}\n", .{ entry.name, name });
                 add_shader(b, exe, name);
             }

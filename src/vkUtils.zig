@@ -609,6 +609,26 @@ pub fn create_image_view(device: c.VkDevice, image: c.VkImage, format: c.VkForma
     return image_view;
 }
 
+pub fn create_shader_module(device: c.VkDevice, code: []const u8, alloc_callback: ?*c.VkAllocationCallbacks) ?c.VkShaderModule {
+    std.debug.assert(code.len % 4 == 0);
+
+    const data: *const u32 = @alignCast(@ptrCast(code.ptr));
+
+    const shader_module_ci = std.mem.zeroInit(c.VkShaderModuleCreateInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = code.len,
+        .pCode = data,
+    });
+
+    var shader_module: c.VkShaderModule = undefined;
+    check_vk(c.vkCreateShaderModule(device, &shader_module_ci, alloc_callback, &shader_module)) catch |err| {
+        log.err("Failed to create shader module with error: {s}", .{@errorName(err)});
+        return null;
+    };
+
+    return shader_module;
+}
+
 fn get_vulkan_instance_funct(comptime Fn: type, instance: c.VkInstance, name: [*c]const u8) Fn {
     const get_proc_addr: c.PFN_vkGetInstanceProcAddr = @ptrCast(c.SDL_Vulkan_GetVkGetInstanceProcAddr());
     if (get_proc_addr) |get_proc_addr_fn| {

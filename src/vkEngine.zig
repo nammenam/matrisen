@@ -1,5 +1,6 @@
 const std = @import("std");
-const vki = @import("vkInitUtils.zig");
+const vki = @import("vkUtils.zig");
+const d = @import("vkDescriptors.zig");
 const c = @import("clibs.zig");
 const log = std.log.scoped(.vkEngine);
 const window_extent = c.VkExtent2D{ .width = 1600, .height = 900 };
@@ -14,6 +15,9 @@ const AllocatedBuffer = struct {
 const AllocatedImage = struct {
     image: c.VkImage,
     allocation: c.VmaAllocation,
+    extent: c.VkExtent3D,
+    format: c.VkFormat,
+    view: c.VkImageView,
 };
 
 const UploadContext = struct {
@@ -53,13 +57,7 @@ swapchain_extent: c.VkExtent2D = undefined,
 swapchain_images: []c.VkImage = undefined,
 swapchain_image_views: []c.VkImageView = undefined,
 depth_image: AllocatedImage = undefined,
-depth_image_format: c.VkFormat = undefined,
-depth_image_view: c.VkImageView = null,
-depth_image_extent: c.VkExtent3D = undefined,
 draw_image: AllocatedImage = undefined,
-draw_image_format: c.VkFormat = undefined,
-draw_image_view: c.VkImageView = null,
-draw_image_extent: c.VkExtent3D = undefined,
 draw_extent: c.VkExtent2D = undefined,
 surface: c.VkSurfaceKHR = null,
 upload_context: UploadContext = .{},
@@ -68,6 +66,11 @@ image_deletion_queue: std.ArrayList(AllocatedImage) = undefined,
 imageview_deletion_queue: std.ArrayList(c.VkImageView) = undefined,
 frames: [FRAME_OVERLAP]FrameData = .{FrameData{}} ** FRAME_OVERLAP,
 frame_number: u32 = 0,
+global_descriptor_allocator: d.DescriptorAllocator = undefined,
+draw_image_descriptors: c.VkDescriptorSet = undefined,
+draw_image_descriptor_layout: c.VkDescriptorSetLayout = undefined,
+gradient_pipeline: c.VkPipeline = null,
+gradient_pipeline_layout: c.VkPipelineLayout = null,
 
 const FRAME_OVERLAP = 2;
 
@@ -98,6 +101,8 @@ pub fn init(a: std.mem.Allocator) Self {
     engine.init_swapchain();
     engine.init_commands();
     engine.init_sync_structures();
+    engine.init_descriptors();
+    engine.init_pipelines();
     return engine;
 }
 
@@ -131,6 +136,11 @@ pub fn cleanup(self: *Self) void {
         c.vmaDestroyBuffer(self.gpu_allocator, entry.buffer, entry.allocation);
     }
     self.buffer_deletion_queue.deinit();
+    c.vkDestroyDescriptorSetLayout(self.device, self.draw_image_descriptor_layout, vk_alloc_cbs);
+    self.global_descriptor_allocator.clear_descriptors(self.device);
+    self.global_descriptor_allocator.destroy_pool(self.device);
+    c.vkDestroyPipelineLayout(self.device, self.gradient_pipeline_layout, vk_alloc_cbs);
+    c.vkDestroyPipeline(self.device, self.gradient_pipeline, vk_alloc_cbs);
     for (self.frames) |frame| {
         c.vkDestroyCommandPool(self.device, frame.command_pool, vk_alloc_cbs);
         c.vkDestroyFence(self.device, frame.render_fence, vk_alloc_cbs);
@@ -169,8 +179,8 @@ fn draw(self: *Self) void {
         .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     });
 
-    self.draw_extent.width = self.draw_image_extent.width;
-    self.draw_extent.height = self.draw_image_extent.height;
+    self.draw_extent.width = self.draw_image.extent.width;
+    self.draw_extent.height = self.draw_image.extent.height;
 
     check_vk(c.vkBeginCommandBuffer(cmd, &cmd_begin_info)) catch @panic("Failed to begin command buffer");
 
@@ -226,16 +236,19 @@ fn draw(self: *Self) void {
 }
 
 fn draw_background(self: *Self, cmd: c.VkCommandBuffer) void {
-    const color = std.math.sin(@as(f32, @floatFromInt(self.frame_number)) * 0.01) * 0.5 + 0.5;
-    const clear_value = c.VkClearColorValue{ .float32 = .{ color, color, color, 1.0 } };
-    const clear_range = c.VkImageSubresourceRange{
-        .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
-        .baseMipLevel = 0,
-        .levelCount = c.VK_REMAINING_MIP_LEVELS,
-        .baseArrayLayer = 0,
-        .layerCount = c.VK_REMAINING_ARRAY_LAYERS,
-    };
-    c.vkCmdClearColorImage(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_GENERAL, &clear_value, 1, &clear_range);
+    // const color = std.math.sin(@as(f32, @floatFromInt(self.frame_number)) * 0.01) * 0.5 + 0.5;
+    // const clear_value = c.VkClearColorValue{ .float32 = .{ color, color, color, 1.0 } };
+    // const clear_range = c.VkImageSubresourceRange{
+    //     .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+    //     .baseMipLevel = 0,
+    //     .levelCount = c.VK_REMAINING_MIP_LEVELS,
+    //     .baseArrayLayer = 0,
+    //     .layerCount = c.VK_REMAINING_ARRAY_LAYERS,
+    // };
+    // c.vkCmdClearColorImage(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_GENERAL, &clear_value, 1, &clear_range);
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.gradient_pipeline);
+    c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.gradient_pipeline_layout, 0, 1, &self.draw_image_descriptors, 0, null);
+    c.vkCmdDispatch(cmd, self.draw_extent.width / 16, self.draw_extent.height / 16, 1);
 }
 
 fn transition_image(cmd: c.VkCommandBuffer, image: c.VkImage, current_layout: c.VkImageLayout, new_layout: c.VkImageLayout) void {
@@ -295,6 +308,74 @@ fn copy_image_to_image(cmd: c.VkCommandBuffer, src: c.VkImage, dst: c.VkImage, s
     blit_info.filter = c.VK_FILTER_LINEAR;
 
     c.vkCmdBlitImage2(cmd, &blit_info);
+}
+
+fn init_descriptors(self: *Self) void {
+    var sizes = [_]d.DescriptorAllocator.PoolSizeRatio{
+        .{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .ratio = 10 },
+    };
+
+    self.global_descriptor_allocator.init_pool(self.device, 10, &sizes, self.cpu_allocator);
+
+    {
+        var builder = d.DescriptorLayoutBuilder{ .bindings = std.ArrayList(c.VkDescriptorSetLayoutBinding).init(self.cpu_allocator) };
+        defer builder.bindings.deinit();
+        builder.add_binding(0, c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+        self.draw_image_descriptor_layout = builder.build(self.device, c.VK_SHADER_STAGE_COMPUTE_BIT, null, 0);
+    }
+
+    self.draw_image_descriptors = self.global_descriptor_allocator.allocate(self.device, self.draw_image_descriptor_layout);
+
+    const image_info = std.mem.zeroInit(c.VkDescriptorImageInfo, .{
+        .imageView = self.draw_image.view,
+        .imageLayout = c.VK_IMAGE_LAYOUT_GENERAL,
+    });
+
+    const write = std.mem.zeroInit(c.VkWriteDescriptorSet, .{
+        .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = self.draw_image_descriptors,
+        .dstBinding = 0,
+        .descriptorCount = 1,
+        .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        .pImageInfo = &image_info,
+    });
+
+    c.vkUpdateDescriptorSets(self.device, 1, &write, 0, null);
+}
+
+fn init_pipelines(self: *Self) void {
+    self.init_background_pipelines();
+}
+
+fn init_background_pipelines(self: *Self) void {
+    const compute_layout = std.mem.zeroInit(c.VkPipelineLayoutCreateInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &self.draw_image_descriptor_layout,
+    });
+
+    check_vk(c.vkCreatePipelineLayout(self.device, &compute_layout, null, &self.gradient_pipeline_layout)) catch @panic("Failed to create pipeline layout");
+
+    const comp_code align(4) = @embedFile("gradient.comp").*;
+    const comp_module = vki.create_shader_module(self.device, &comp_code, vk_alloc_cbs) orelse null;
+    if (comp_module != null) log.info("Created compute shader module", .{});
+
+    const stage_ci = std.mem.zeroInit(c.VkPipelineShaderStageCreateInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = c.VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = comp_module,
+        .pName = "main",
+    });
+
+    const compute_ci = std.mem.zeroInit(c.VkComputePipelineCreateInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .layout = self.gradient_pipeline_layout,
+        .stage = stage_ci,
+    });
+
+    check_vk(c.vkCreateComputePipelines(self.device, null, 1, &compute_ci, null, &self.gradient_pipeline)) catch @panic("Failed to create compute pipeline");
+
+    c.vkDestroyShaderModule(self.device, comp_module, vk_alloc_cbs);
 }
 
 fn init_instance(self: *Self) void {
@@ -405,17 +486,17 @@ fn init_swapchain(self: *Self) void {
     for (self.swapchain_image_views) |view|
         self.imageview_deletion_queue.append(view) catch @panic("Out of memory");
     log.info("Created swapchain", .{});
-    self.draw_image_extent = c.VkExtent3D{
+    self.draw_image.extent = c.VkExtent3D{
         .width = @intCast(win_width),
         .height = @intCast(win_height),
         .depth = 1,
     };
-    self.draw_image_format = c.VK_FORMAT_R16G16B16A16_SFLOAT;
+    self.draw_image.format = c.VK_FORMAT_R16G16B16A16_SFLOAT;
     const draw_image_ci = std.mem.zeroInit(c.VkImageCreateInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = c.VK_IMAGE_TYPE_2D,
-        .format = self.draw_image_format,
-        .extent = self.draw_image_extent,
+        .format = self.draw_image.format,
+        .extent = self.draw_image.extent,
         .mipLevels = 1,
         .arrayLayers = 1,
         .samples = c.VK_SAMPLE_COUNT_1_BIT,
@@ -431,7 +512,7 @@ fn init_swapchain(self: *Self) void {
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = self.draw_image.image,
         .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
-        .format = self.draw_image_format,
+        .format = self.draw_image.format,
         .subresourceRange = .{
             .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
             .baseMipLevel = 0,
@@ -440,21 +521,21 @@ fn init_swapchain(self: *Self) void {
             .layerCount = 1,
         },
     });
-    check_vk(c.vkCreateImageView(self.device, &draw_image_view_ci, vk_alloc_cbs, &self.draw_image_view)) catch @panic("Failed to create draw image view");
-    self.imageview_deletion_queue.append(self.draw_image_view) catch @panic("Out of memory");
+    check_vk(c.vkCreateImageView(self.device, &draw_image_view_ci, vk_alloc_cbs, &self.draw_image.view)) catch @panic("Failed to create draw image view");
+    self.imageview_deletion_queue.append(self.draw_image.view) catch @panic("Out of memory");
     self.image_deletion_queue.append(self.draw_image) catch @panic("Out of memory");
 
-    self.depth_image_extent = c.VkExtent3D{
+    self.depth_image.extent = c.VkExtent3D{
         .width = self.swapchain_extent.width,
         .height = self.swapchain_extent.height,
         .depth = 1,
     };
-    self.depth_image_format = c.VK_FORMAT_D32_SFLOAT;
+    self.depth_image.format = c.VK_FORMAT_D32_SFLOAT;
     const depth_image_ci = std.mem.zeroInit(c.VkImageCreateInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = c.VK_IMAGE_TYPE_2D,
-        .format = self.depth_image_format,
-        .extent = self.depth_image_extent,
+        .format = self.depth_image.format,
+        .extent = self.depth_image.extent,
         .mipLevels = 1,
         .arrayLayers = 1,
         .samples = c.VK_SAMPLE_COUNT_1_BIT,
@@ -472,7 +553,7 @@ fn init_swapchain(self: *Self) void {
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = self.depth_image.image,
         .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
-        .format = self.depth_image_format,
+        .format = self.depth_image.format,
         .subresourceRange = .{
             .aspectMask = c.VK_IMAGE_ASPECT_DEPTH_BIT,
             .baseMipLevel = 0,
@@ -481,8 +562,8 @@ fn init_swapchain(self: *Self) void {
             .layerCount = 1,
         },
     });
-    check_vk(c.vkCreateImageView(self.device, &depth_image_view_ci, vk_alloc_cbs, &self.depth_image_view)) catch @panic("Failed to create depth image view");
-    self.imageview_deletion_queue.append(self.depth_image_view) catch @panic("Out of memory");
+    check_vk(c.vkCreateImageView(self.device, &depth_image_view_ci, vk_alloc_cbs, &self.depth_image.view)) catch @panic("Failed to create depth image view");
+    self.imageview_deletion_queue.append(self.depth_image.view) catch @panic("Out of memory");
     self.image_deletion_queue.append(self.depth_image) catch @panic("Out of memory");
     log.info("Created depth image", .{});
 }
