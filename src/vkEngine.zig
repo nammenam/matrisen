@@ -164,6 +164,74 @@ pub fn cleanup(self: *Self) void {
     c.SDL_Quit();
 }
 
+pub fn immediate_submit(self: *Self, submit_ctx: anytype) void {
+    comptime {
+        var Context = @TypeOf(submit_ctx);
+        var is_ptr = false;
+        switch (@typeInfo(Context)) {
+            .Struct, .Union, .Enum => {},
+            .Pointer => |ptr| {
+                if (ptr.size != .One) {
+                    @compileError("Context must be a type with a submit function. " ++ @typeName(Context) ++ "is a multi element pointer");
+                }
+                Context = ptr.child;
+                is_ptr = true;
+                switch (Context) {
+                    .Struct, .Union, .Enum, .Opaque => {},
+                    else => @compileError("Context must be a type with a submit function. " ++ @typeName(Context) ++ "is a pointer to a non struct/union/enum/opaque type"),
+                }
+            },
+            else => @compileError("Context must be a type with a submit method. Cannot use: " ++ @typeName(Context)),
+        }
+
+        if (!@hasDecl(Context, "submit")) {
+            @compileError("Context should have a submit method");
+        }
+
+        const submit_fn_info = @typeInfo(@TypeOf(Context.submit));
+        if (submit_fn_info != .Fn) {
+            @compileError("Context submit method should be a function");
+        }
+
+        if (submit_fn_info.Fn.params.len != 2) {
+            @compileError("Context submit method should have two parameters");
+        }
+
+        if (submit_fn_info.Fn.params[0].type != Context) {
+            @compileError("Context submit method first parameter should be of type: " ++ @typeName(Context));
+        }
+
+        if (submit_fn_info.Fn.params[1].type != c.VkCommandBuffer) {
+            @compileError("Context submit method second parameter should be of type: " ++ @typeName(c.VkCommandBuffer));
+        }
+    }
+
+    const cmd = self.upload_context.command_buffer;
+
+    const commmand_begin_ci = std.mem.zeroInit(c.VkCommandBufferBeginInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    });
+    check_vk(c.vkBeginCommandBuffer(cmd, &commmand_begin_ci)) catch @panic("Failed to begin command buffer");
+
+    submit_ctx.submit(cmd);
+
+    check_vk(c.vkEndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");
+
+    const submit_info = std.mem.zeroInit(c.VkSubmitInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cmd,
+    });
+
+    check_vk(c.vkQueueSubmit(self.graphics_queue, 1, &submit_info, self.upload_context.upload_fence)) catch @panic("Failed to submit to graphics queue");
+
+    check_vk(c.vkWaitForFences(self.device, 1, &self.upload_context.upload_fence, c.VK_TRUE, 1_000_000_000)) catch @panic("Failed to wait for upload fence");
+    check_vk(c.vkResetFences(self.device, 1, &self.upload_context.upload_fence)) catch @panic("Failed to reset upload fence");
+
+    check_vk(c.vkResetCommandPool(self.device, self.upload_context.command_pool, 0)) catch @panic("Failed to reset command pool");
+}
+
 fn draw(self: *Self) void {
     const timeout: u64 = 1_000_000_000; // 1 second in nanonesconds
     const frame = self.frames[@intCast(@mod(self.frame_number, FRAME_OVERLAP))]; // Get the current frame data
