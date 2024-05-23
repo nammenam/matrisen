@@ -1,4 +1,5 @@
 [submodule "thirdparty/cimgui"]
-	path = thirdparty/cimgui
-	url = https://github.com/cimgui/cimgui.git
+    path = thirdparty/cimgui
+    url = https://github.com/cimgui/cimgui.git
+	branch = docking_inter
     shallow = true
