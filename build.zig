@@ -21,7 +21,6 @@ pub fn build(b: *std.Build) void {
 
     exe.addIncludePath(.{ .path = "thirdparty/cimgui/" });
 
-
     compile_all_shaders(b, exe);
 
     const imgui_lib = b.addStaticLibrary(.{
@@ -32,9 +31,12 @@ pub fn build(b: *std.Build) void {
     imgui_lib.linkLibC();
     imgui_lib.linkLibCpp();
     imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/imgui/" });
+    imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/" });
     imgui_lib.linkSystemLibrary("SDL3");
+    imgui_lib.linkSystemLibrary("vulkan");
     imgui_lib.addCSourceFiles(.{
         .files = &.{
+            "thirdparty/cimgui/cimgui.cpp",
             "thirdparty/cimgui/imgui/imgui.cpp",
             "thirdparty/cimgui/imgui/imgui_demo.cpp",
             "thirdparty/cimgui/imgui/imgui_draw.cpp",
