@@ -1,6 +1,6 @@
 #version 460
 
-layout (local_size_x = 16, local_size_y = 16) in;
+layout (local_size_x = 32, local_size_y = 32) in;
 
 layout(rgba16f,set = 0, binding = 0) uniform image2D image;
 
@@ -17,7 +17,7 @@ void main()
         if(gl_LocalInvocationID.x != 0 && gl_LocalInvocationID.y != 0)
         {
             color.x = float(texelCoord.x)/(size.x);
-            color.y = float(texelCoord.y)/(size.y);	
+            color.y = float(texelCoord.x)/(size.x);	
         }
     
         imageStore(image, texelCoord, color);

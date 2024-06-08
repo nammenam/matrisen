@@ -316,7 +316,7 @@ fn draw_background(self: *Self, cmd: c.VkCommandBuffer) void {
     // c.vkCmdClearColorImage(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_GENERAL, &clear_value, 1, &clear_range);
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.gradient_pipeline);
     c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.gradient_pipeline_layout, 0, 1, &self.draw_image_descriptors, 0, null);
-    c.vkCmdDispatch(cmd, self.draw_extent.width / 16, self.draw_extent.height / 16, 1);
+    c.vkCmdDispatch(cmd, self.draw_extent.width / 32, self.draw_extent.height / 32, 1);
 }
 
 fn transition_image(cmd: c.VkCommandBuffer, image: c.VkImage, current_layout: c.VkImageLayout, new_layout: c.VkImageLayout) void {
