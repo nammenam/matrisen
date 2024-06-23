@@ -13,7 +13,8 @@ pub fn build(b: *std.Build) void {
     exe.linkLibCpp();
     exe.linkLibC();
 
-    exe.linkSystemLibrary("SDL3");    
+    exe.linkSystemLibrary("SDL3");
+    exe.linkSystemLibrary("lua5.4");
     exe.linkSystemLibrary("vulkan");
 
     exe.addCSourceFile(.{ .file = .{ .path = "src/vk_mem_alloc.cpp" }, .flags = &.{ "" } });
@@ -32,9 +33,7 @@ pub fn build(b: *std.Build) void {
     imgui_lib.linkLibC();
     imgui_lib.linkLibCpp();
     imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/imgui/" });
-    // imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/" });
-    // imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/imgui/backends/" });
-    // imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/generator/output/" });
+    imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/imgui/backends/" });
     imgui_lib.linkSystemLibrary("SDL3");
     imgui_lib.addCSourceFiles(.{
         .files = &.{
@@ -47,10 +46,9 @@ pub fn build(b: *std.Build) void {
             "thirdparty/cimgui/imgui/backends/imgui_impl_sdl3.cpp",
             "thirdparty/cimgui/imgui/backends/imgui_impl_vulkan.cpp",
         },
+        .flags = &.{"-DIMGUI_DEFINE_ENUMS_AND_STRUCTS=1"},
     });
     exe.linkLibrary(imgui_lib);
-
-
     const run_cmd = b.addRunArtifact(exe);
 
     run_cmd.step.dependOn(b.getInstallStep());

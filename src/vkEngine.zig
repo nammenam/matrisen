@@ -2,6 +2,8 @@ const std = @import("std");
 const vki = @import("vkUtils.zig");
 const d = @import("vkDescriptors.zig");
 const c = @import("clibs.zig");
+const m = @import("math3d.zig");
+const s = @import("SDLutils.zig");
 const log = std.log.scoped(.vkEngine);
 const window_extent = c.VkExtent2D{ .width = 1600, .height = 900 };
 const vk_alloc_cbs: ?*c.VkAllocationCallbacks = null;
@@ -34,6 +36,13 @@ const FrameData = struct {
     main_command_buffer: c.VkCommandBuffer = null,
     object_buffer: AllocatedBuffer = .{ .buffer = null, .allocation = null },
     object_descriptor_set: c.VkDescriptorSet = null,
+};
+
+const ComputePushConstants = struct {
+    data1: m.Vec4,
+    data2: m.Vec4,
+    data3: m.Vec4,
+    data4: m.Vec4,
 };
 
 const Self = @This();
@@ -71,6 +80,13 @@ draw_image_descriptors: c.VkDescriptorSet = undefined,
 draw_image_descriptor_layout: c.VkDescriptorSetLayout = undefined,
 gradient_pipeline: c.VkPipeline = null,
 gradient_pipeline_layout: c.VkPipelineLayout = null,
+lua_state: ?*c.lua_State,
+pc: ComputePushConstants = .{
+    .data1 = m.Vec4{ .x = 1.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data2 = m.Vec4{ .x = 0.0, .y = 1.0, .z = 0.0, .w = 0.0 },
+    .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+},
 
 const FRAME_OVERLAP = 2;
 
@@ -85,7 +101,9 @@ pub fn init(a: std.mem.Allocator) Self {
         .buffer_deletion_queue = std.ArrayList(AllocatedBuffer).init(a),
         .image_deletion_queue = std.ArrayList(AllocatedImage).init(a),
         .imageview_deletion_queue = std.ArrayList(c.VkImageView).init(a),
+        .lua_state = c.luaL_newstate(),
     };
+
     engine.init_instance();
     check_sdl_bool(c.SDL_Vulkan_CreateSurface(window, engine.instance, vk_alloc_cbs, &engine.surface));
     engine.init_device();
@@ -103,6 +121,7 @@ pub fn init(a: std.mem.Allocator) Self {
     engine.init_sync_structures();
     engine.init_descriptors();
     engine.init_pipelines();
+    c.luaL_openlibs(engine.lua_state);
     return engine;
 }
 
@@ -114,8 +133,35 @@ pub fn run(self: *Self) void {
 
     while (!quit) {
         while (c.SDL_PollEvent(&event) != 0) {
-            if (event.type == c.SDL_EVENT_QUIT) {
-                quit = true;
+            switch (event.type) {
+                c.SDL_EVENT_QUIT => {
+                    quit = true;
+                },
+                c.SDL_EVENT_KEY_DOWN => {
+                    s.handle_key_down(self, event.key);
+                    if (event.key.keysym.sym == c.SDLK_r) {
+                        // Reload and execute Lua script when 'R' is pressed
+                        const script_path = "script.lua";
+                        if (c.luaL_loadfilex(self.lua_state, script_path, null) == 0) {
+                            if (c.lua_pcallk(self.lua_state, 0, 0, 0, 0, null) != 0) {
+                                var len: usize = undefined;
+                                const error_msg = c.lua_tolstring(self.lua_state, -1, &len);
+                                if (error_msg != null) {
+                                    const error_slice = error_msg[0..len];
+                                    std.log.err("Failed to run script: {s}", .{error_slice});
+                                } else {
+                                    std.log.err("Failed to run script: Unknown error", .{});
+                                }
+                            } 
+                        } else {
+                            std.log.err("Failed to load script: {s}", .{script_path});
+                        }
+                    }
+                },
+                c.SDL_EVENT_KEY_UP => {
+                    s.handle_key_up(self, event.key);
+                },
+                else => {},
             }
         }
         self.draw();
@@ -161,6 +207,7 @@ pub fn cleanup(self: *Self) void {
     }
     c.SDL_DestroyWindow(self.window);
     c.vkDestroyInstance(self.instance, vk_alloc_cbs);
+    c.lua_close(self.lua_state);
     c.SDL_Quit();
 }
 
@@ -205,7 +252,8 @@ pub fn immediate_submit(self: *Self, submit_ctx: anytype) void {
             @compileError("Context submit method second parameter should be of type: " ++ @typeName(c.VkCommandBuffer));
         }
     }
-
+    check_vk(c.vkResetFences(self.device, 1, &self.upload_context.upload_fence)) catch @panic("Failed to reset upload fence");
+    check_vk(c.vkResetCommandBuffer(self.upload_context.command_buffer, 0)) catch @panic("Failed to reset command buffer");
     const cmd = self.upload_context.command_buffer;
 
     const commmand_begin_ci = std.mem.zeroInit(c.VkCommandBufferBeginInfo, .{
@@ -218,22 +266,22 @@ pub fn immediate_submit(self: *Self, submit_ctx: anytype) void {
 
     check_vk(c.vkEndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");
 
-    const submit_info = std.mem.zeroInit(c.VkSubmitInfo, .{
-        .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &cmd,
+    const cmd_info = std.mem.zeroInit(c.VkCommandBufferSubmitInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+        .commandBuffer = cmd,
+    });
+    const submit_info = std.mem.zeroInit(c.VkSubmitInfo2, .{
+        .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+        .commandBufferInfoCount = 1,
+        .pCommandBufferInfos = &cmd_info,
     });
 
-    check_vk(c.vkQueueSubmit(self.graphics_queue, 1, &submit_info, self.upload_context.upload_fence)) catch @panic("Failed to submit to graphics queue");
-
+    check_vk(c.vkQueueSubmit2(self.graphics_queue, 1, &submit_info, self.upload_context.upload_fence)) catch @panic("Failed to submit to graphics queue");
     check_vk(c.vkWaitForFences(self.device, 1, &self.upload_context.upload_fence, c.VK_TRUE, 1_000_000_000)) catch @panic("Failed to wait for upload fence");
-    check_vk(c.vkResetFences(self.device, 1, &self.upload_context.upload_fence)) catch @panic("Failed to reset upload fence");
-
-    check_vk(c.vkResetCommandPool(self.device, self.upload_context.command_pool, 0)) catch @panic("Failed to reset command pool");
 }
 
 fn draw(self: *Self) void {
-    const timeout: u64 = 1_000_000_000; // 1 second in nanonesconds
+    const timeout: u64 = 1_000_000; // 1 second in nanonesconds
     const frame = self.frames[@intCast(@mod(self.frame_number, FRAME_OVERLAP))]; // Get the current frame data
     check_vk(c.vkWaitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, timeout)) catch @panic("Failed to wait for render fence");
     check_vk(c.vkResetFences(self.device, 1, &frame.render_fence)) catch @panic("Failed to reset render fence");
@@ -252,13 +300,13 @@ fn draw(self: *Self) void {
 
     check_vk(c.vkBeginCommandBuffer(cmd, &cmd_begin_info)) catch @panic("Failed to begin command buffer");
 
-    transition_image(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_GENERAL);
+    vki.transition_image(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_GENERAL);
     self.draw_background(cmd);
-    transition_image(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_GENERAL, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    vki.transition_image(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_GENERAL, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
-    transition_image(cmd, self.swapchain_images[swapchain_image_index], c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    copy_image_to_image(cmd, self.draw_image.image, self.swapchain_images[swapchain_image_index], self.draw_extent, self.swapchain_extent);
-    transition_image(cmd, self.swapchain_images[swapchain_image_index], c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    vki.transition_image(cmd, self.swapchain_images[swapchain_image_index], c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    vki.copy_image_to_image(cmd, self.draw_image.image, self.swapchain_images[swapchain_image_index], self.draw_extent, self.swapchain_extent);
+    vki.transition_image(cmd, self.swapchain_images[swapchain_image_index], c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     check_vk(c.vkEndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");
 
@@ -304,78 +352,10 @@ fn draw(self: *Self) void {
 }
 
 fn draw_background(self: *Self, cmd: c.VkCommandBuffer) void {
-    // const color = std.math.sin(@as(f32, @floatFromInt(self.frame_number)) * 0.01) * 0.5 + 0.5;
-    // const clear_value = c.VkClearColorValue{ .float32 = .{ color, color, color, 1.0 } };
-    // const clear_range = c.VkImageSubresourceRange{
-    //     .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
-    //     .baseMipLevel = 0,
-    //     .levelCount = c.VK_REMAINING_MIP_LEVELS,
-    //     .baseArrayLayer = 0,
-    //     .layerCount = c.VK_REMAINING_ARRAY_LAYERS,
-    // };
-    // c.vkCmdClearColorImage(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_GENERAL, &clear_value, 1, &clear_range);
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.gradient_pipeline);
     c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.gradient_pipeline_layout, 0, 1, &self.draw_image_descriptors, 0, null);
-    c.vkCmdDispatch(cmd, self.draw_extent.width / 32, self.draw_extent.height / 32, 1);
-}
-
-fn transition_image(cmd: c.VkCommandBuffer, image: c.VkImage, current_layout: c.VkImageLayout, new_layout: c.VkImageLayout) void {
-    var barrier = std.mem.zeroInit(c.VkImageMemoryBarrier2, .{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 });
-    barrier.srcStageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    barrier.srcAccessMask = c.VK_ACCESS_2_MEMORY_WRITE_BIT;
-    barrier.dstStageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    barrier.dstAccessMask = c.VK_ACCESS_2_MEMORY_WRITE_BIT | c.VK_ACCESS_2_MEMORY_READ_BIT;
-    barrier.oldLayout = current_layout;
-    barrier.newLayout = new_layout;
-
-    const aspect_mask: u32 = if (new_layout == c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) c.VK_IMAGE_ASPECT_DEPTH_BIT else c.VK_IMAGE_ASPECT_COLOR_BIT;
-    const subresource_range = std.mem.zeroInit(c.VkImageSubresourceRange, .{
-        .aspectMask = aspect_mask,
-        .baseMipLevel = 0,
-        .levelCount = c.VK_REMAINING_MIP_LEVELS,
-        .baseArrayLayer = 0,
-        .layerCount = c.VK_REMAINING_ARRAY_LAYERS,
-    });
-
-    barrier.image = image;
-    barrier.subresourceRange = subresource_range;
-
-    const dep_info = std.mem.zeroInit(c.VkDependencyInfoKHR, .{
-        .sType = c.VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR,
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &barrier,
-    });
-
-    c.vkCmdPipelineBarrier2(cmd, &dep_info);
-}
-
-fn copy_image_to_image(cmd: c.VkCommandBuffer, src: c.VkImage, dst: c.VkImage, src_size: c.VkExtent2D, dst_size: c.VkExtent2D) void {
-    var blit_region = c.VkImageBlit2{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_BLIT_2, .pNext = null };
-    blit_region.srcOffsets[1].x = @intCast(src_size.width);
-    blit_region.srcOffsets[1].y = @intCast(src_size.height);
-    blit_region.srcOffsets[1].z = 1;
-    blit_region.dstOffsets[1].x = @intCast(dst_size.width);
-    blit_region.dstOffsets[1].y = @intCast(dst_size.height);
-    blit_region.dstOffsets[1].z = 1;
-    blit_region.srcSubresource.aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT;
-    blit_region.srcSubresource.baseArrayLayer = 0;
-    blit_region.srcSubresource.layerCount = 1;
-    blit_region.srcSubresource.mipLevel = 0;
-    blit_region.dstSubresource.aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT;
-    blit_region.dstSubresource.baseArrayLayer = 0;
-    blit_region.dstSubresource.layerCount = 1;
-    blit_region.dstSubresource.mipLevel = 0;
-
-    var blit_info = c.VkBlitImageInfo2{ .sType = c.VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2, .pNext = null };
-    blit_info.srcImage = src;
-    blit_info.srcImageLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    blit_info.dstImage = dst;
-    blit_info.dstImageLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    blit_info.regionCount = 1;
-    blit_info.pRegions = &blit_region;
-    blit_info.filter = c.VK_FILTER_LINEAR;
-
-    c.vkCmdBlitImage2(cmd, &blit_info);
+    c.vkCmdPushConstants(cmd, self.gradient_pipeline_layout, c.VK_SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(ComputePushConstants), &self.pc);
+    c.vkCmdDispatch(cmd, self.draw_extent.width / 16, self.draw_extent.height / 16, 1);
 }
 
 fn init_descriptors(self: *Self) void {
@@ -416,11 +396,20 @@ fn init_pipelines(self: *Self) void {
 }
 
 fn init_background_pipelines(self: *Self) void {
-    const compute_layout = std.mem.zeroInit(c.VkPipelineLayoutCreateInfo, .{
+    var compute_layout = std.mem.zeroInit(c.VkPipelineLayoutCreateInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
         .pSetLayouts = &self.draw_image_descriptor_layout,
     });
+
+    const push_constant_range = std.mem.zeroInit(c.VkPushConstantRange, .{
+        .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT,
+        .offset = 0,
+        .size = @sizeOf(ComputePushConstants),
+    });
+
+    compute_layout.pPushConstantRanges = &push_constant_range;
+    compute_layout.pushConstantRangeCount = 1;
 
     check_vk(c.vkCreatePipelineLayout(self.device, &compute_layout, null, &self.gradient_pipeline_layout)) catch @panic("Failed to create pipeline layout");
 
