@@ -17,38 +17,10 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary("lua5.4");
     exe.linkSystemLibrary("vulkan");
 
-    exe.addCSourceFile(.{ .file = .{ .path = "src/vk_mem_alloc.cpp" }, .flags = &.{ "" } });
-    exe.addCSourceFile(.{ .file = .{ .path = "src/stb_image.c" }, .flags = &.{ "" } });
-
-    // exe.addIncludePath(.{ .path = "thirdparty/cimgui/" });
-    // exe.addIncludePath(.{ .path = "thirdparty/cimgui/generator/output/" });
-
+    exe.addCSourceFile(.{ .file = .{ .path = "src/vk_mem_alloc.cpp" }, .flags = &.{""} });
+    exe.addCSourceFile(.{ .file = .{ .path = "src/stb_image.c" }, .flags = &.{""} });
     compile_all_shaders(b, exe);
 
-    // const imgui_lib = b.addStaticLibrary(.{
-    //     .name = "cimgui",
-    //     .target = b.host,
-    //     .optimize = optimize,
-    // });
-    // imgui_lib.linkLibC();
-    // imgui_lib.linkLibCpp();
-    // imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/imgui/" });
-    // imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/imgui/backends/" });
-    // imgui_lib.linkSystemLibrary("SDL3");
-    // imgui_lib.addCSourceFiles(.{
-    //     .files = &.{
-    //         "thirdparty/cimgui/cimgui.cpp",
-    //         "thirdparty/cimgui/imgui/imgui.cpp",
-    //         "thirdparty/cimgui/imgui/imgui_demo.cpp",
-    //         "thirdparty/cimgui/imgui/imgui_draw.cpp",
-    //         "thirdparty/cimgui/imgui/imgui_tables.cpp",
-    //         "thirdparty/cimgui/imgui/imgui_widgets.cpp",
-    //         "thirdparty/cimgui/imgui/backends/imgui_impl_sdl3.cpp",
-    //         "thirdparty/cimgui/imgui/backends/imgui_impl_vulkan.cpp",
-    //     },
-    //     .flags = &.{"-DIMGUI_DEFINE_ENUMS_AND_STRUCTS=1"},
-    // });
-    // exe.linkLibrary(imgui_lib);
     const run_cmd = b.addRunArtifact(exe);
 
     run_cmd.step.dependOn(b.getInstallStep());
@@ -70,19 +42,9 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
-
-    const install_docs = b.addInstallDirectory(.{
-        .source_dir = exe.getEmittedDocs(),
-        .install_dir = .prefix,
-        .install_subdir = "docs",
-    });
-
-    const docs_step = b.step("docs", "Copy documentation artifacts to prefix path");
-    docs_step.dependOn(&install_docs.step);
 }
 
 fn compile_all_shaders(b: *std.Build, exe: *std.Build.Step.Compile) void {
-
     const shaders_dir = if (@hasDecl(@TypeOf(b.build_root.handle), "openIterableDir"))
         b.build_root.handle.openIterableDir("shaders", .{}) catch @panic("Failed to open shaders directory")
     else
@@ -94,7 +56,7 @@ fn compile_all_shaders(b: *std.Build, exe: *std.Build.Step.Compile) void {
             const ext = std.fs.path.extension(entry.name);
             if (std.mem.eql(u8, ext, ".glsl")) {
                 const basename = std.fs.path.basename(entry.name);
-                const name = basename[0..basename.len - ext.len];
+                const name = basename[0 .. basename.len - ext.len];
                 std.debug.print("found shader file to compile: {s}. compiling with name: {s}\n", .{ entry.name, name });
                 add_shader(b, exe, name);
             }
@@ -106,7 +68,7 @@ fn add_shader(b: *std.Build, exe: *std.Build.Step.Compile, name: []const u8) voi
     const source = std.fmt.allocPrint(b.allocator, "shaders/{s}.glsl", .{name}) catch @panic("OOM");
     const outpath = std.fmt.allocPrint(b.allocator, "shaders/{s}.spv", .{name}) catch @panic("OOM");
 
-    const shader_compilation = b.addSystemCommand(&.{ "glslangValidator" });
+    const shader_compilation = b.addSystemCommand(&.{"glslangValidator"});
     shader_compilation.addArg("-V");
     shader_compilation.addArg("-o");
     const output = shader_compilation.addOutputFileArg(outpath);
