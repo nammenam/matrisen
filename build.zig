@@ -20,35 +20,35 @@ pub fn build(b: *std.Build) void {
     exe.addCSourceFile(.{ .file = .{ .path = "src/vk_mem_alloc.cpp" }, .flags = &.{ "" } });
     exe.addCSourceFile(.{ .file = .{ .path = "src/stb_image.c" }, .flags = &.{ "" } });
 
-    exe.addIncludePath(.{ .path = "thirdparty/cimgui/" });
-    exe.addIncludePath(.{ .path = "thirdparty/cimgui/generator/output/" });
+    // exe.addIncludePath(.{ .path = "thirdparty/cimgui/" });
+    // exe.addIncludePath(.{ .path = "thirdparty/cimgui/generator/output/" });
 
     compile_all_shaders(b, exe);
 
-    const imgui_lib = b.addStaticLibrary(.{
-        .name = "cimgui",
-        .target = b.host,
-        .optimize = optimize,
-    });
-    imgui_lib.linkLibC();
-    imgui_lib.linkLibCpp();
-    imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/imgui/" });
-    imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/imgui/backends/" });
-    imgui_lib.linkSystemLibrary("SDL3");
-    imgui_lib.addCSourceFiles(.{
-        .files = &.{
-            "thirdparty/cimgui/cimgui.cpp",
-            "thirdparty/cimgui/imgui/imgui.cpp",
-            "thirdparty/cimgui/imgui/imgui_demo.cpp",
-            "thirdparty/cimgui/imgui/imgui_draw.cpp",
-            "thirdparty/cimgui/imgui/imgui_tables.cpp",
-            "thirdparty/cimgui/imgui/imgui_widgets.cpp",
-            "thirdparty/cimgui/imgui/backends/imgui_impl_sdl3.cpp",
-            "thirdparty/cimgui/imgui/backends/imgui_impl_vulkan.cpp",
-        },
-        .flags = &.{"-DIMGUI_DEFINE_ENUMS_AND_STRUCTS=1"},
-    });
-    exe.linkLibrary(imgui_lib);
+    // const imgui_lib = b.addStaticLibrary(.{
+    //     .name = "cimgui",
+    //     .target = b.host,
+    //     .optimize = optimize,
+    // });
+    // imgui_lib.linkLibC();
+    // imgui_lib.linkLibCpp();
+    // imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/imgui/" });
+    // imgui_lib.addIncludePath(.{ .path = "thirdparty/cimgui/imgui/backends/" });
+    // imgui_lib.linkSystemLibrary("SDL3");
+    // imgui_lib.addCSourceFiles(.{
+    //     .files = &.{
+    //         "thirdparty/cimgui/cimgui.cpp",
+    //         "thirdparty/cimgui/imgui/imgui.cpp",
+    //         "thirdparty/cimgui/imgui/imgui_demo.cpp",
+    //         "thirdparty/cimgui/imgui/imgui_draw.cpp",
+    //         "thirdparty/cimgui/imgui/imgui_tables.cpp",
+    //         "thirdparty/cimgui/imgui/imgui_widgets.cpp",
+    //         "thirdparty/cimgui/imgui/backends/imgui_impl_sdl3.cpp",
+    //         "thirdparty/cimgui/imgui/backends/imgui_impl_vulkan.cpp",
+    //     },
+    //     .flags = &.{"-DIMGUI_DEFINE_ENUMS_AND_STRUCTS=1"},
+    // });
+    // exe.linkLibrary(imgui_lib);
     const run_cmd = b.addRunArtifact(exe);
 
     run_cmd.step.dependOn(b.getInstallStep());
