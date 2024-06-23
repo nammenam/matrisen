@@ -5,9 +5,9 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 
 const config: Config = {
-  title: 'PortalDocs',
+  title: 'docs',
   tagline: 'wiki',
-  favicon: 'img/portal.png',
+  favicon: 'favicon.ico',
 
   // Set the production url of your site here
   url: 'https://your-docusaurus-site.example.com',
@@ -17,8 +17,8 @@ const config: Config = {
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'portalspace', // Usually your GitHub org/user name.
-  projectName: 'portaldocs', // Usually your repo name.
+  organizationName: 'b', // Usually your GitHub org/user name.
+  projectName: 'b', // Usually your repo name.
 
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
@@ -71,12 +71,12 @@ const config: Config = {
 
   themeConfig: {
     // Replace with your project's social card
-    image: 'img/portal.png',
+    image: 'img/docusaurus.png',
     navbar: {
-      title: 'PortalDocs',
+      title: 'yurr',
       logo: {
         alt: 'My Site Logo',
-        src: 'img/portal.png',
+        src: 'img/docusaurus.png',
       },
       items: [
         {
@@ -136,11 +136,11 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} PortalSpace, Inc. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} brage. Built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,
-      darkTheme: prismThemes.nightOwl,
+      darkTheme: prismThemes.materialDark,
     },
   } satisfies Preset.ThemeConfig,
 };
