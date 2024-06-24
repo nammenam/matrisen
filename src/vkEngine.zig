@@ -92,7 +92,7 @@ const FRAME_OVERLAP = 2;
 
 pub fn init(a: std.mem.Allocator) Self {
     check_sdl(c.SDL_Init(c.SDL_INIT_VIDEO));
-    const window = c.SDL_CreateWindow("floating", window_extent.width, window_extent.height, c.SDL_WINDOW_VULKAN | c.SDL_WINDOW_RESIZABLE) orelse @panic("Failed to create SDL window");
+    const window = c.SDL_CreateWindow("matrisen", window_extent.width, window_extent.height, c.SDL_WINDOW_VULKAN | c.SDL_WINDOW_RESIZABLE) orelse @panic("Failed to create SDL window");
     _ = c.SDL_ShowWindow(window);
 
     var engine = Self{
@@ -441,10 +441,10 @@ fn init_instance(self: *Self) void {
     const sdl_extension_slice = sdl_extensions[0..sdl_required_extension_count];
 
     const instance = vki.Instance.create(std.heap.page_allocator, .{
-        .application_name = "zzz",
-        .application_version = c.VK_MAKE_VERSION(0, 1, 0),
-        .engine_name = "zzz",
-        .engine_version = c.VK_MAKE_VERSION(0, 1, 0),
+        .application_name = "matrisen",
+        .application_version = c.VK_MAKE_VERSION(0, 0, 1),
+        .engine_name = "matrisen",
+        .engine_version = c.VK_MAKE_VERSION(0, 0, 1),
         .api_version = c.VK_MAKE_VERSION(1, 3, 0),
         .debug = true,
         .required_extensions = sdl_extension_slice,
