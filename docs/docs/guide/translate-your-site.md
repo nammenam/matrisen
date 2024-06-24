@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 1
 ---
 
 # Translate your site
@@ -70,8 +70,6 @@ export default {
 ```
 
 The locale dropdown now appears in your navbar:
-
-![Locale Dropdown](./img/localeDropdown.png)
 
 ## Build your localized site
 

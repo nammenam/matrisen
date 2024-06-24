@@ -5,8 +5,8 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 
 const config: Config = {
-  title: 'docs',
-  tagline: 'wiki',
+  title: 'Matrisen',
+  tagline: 'everything is tasty in the matrix',
   favicon: 'favicon.ico',
 
   // Set the production url of your site here
@@ -17,8 +17,8 @@ const config: Config = {
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'b', // Usually your GitHub org/user name.
-  projectName: 'b', // Usually your repo name.
+  organizationName: 'kniv0gaffel', // Usually your GitHub org/user name.
+  projectName: 'matrisen', // Usually your repo name.
 
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
@@ -73,7 +73,7 @@ const config: Config = {
     // Replace with your project's social card
     image: 'img/docusaurus.png',
     navbar: {
-      title: 'yurr',
+      title: 'Home',
       logo: {
         alt: 'My Site Logo',
         src: 'img/docusaurus.png',
@@ -83,7 +83,7 @@ const config: Config = {
           type: 'docSidebar',
           sidebarId: 'tutorialSidebar',
           position: 'left',
-          label: 'Tutorial',
+          label: 'Guide',
         },
         {to: '/blog', label: 'Blog', position: 'left'},
         {
@@ -97,11 +97,15 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Docs',
+          title: 'Read the Docs',
           items: [
             {
               label: 'Guide',
-              to: '/docs/intro',
+              to: '/docs/category/guide',
+            },
+            {
+                label: 'API Reference',
+                to: '/docs/category/reference',
             },
           ],
         },
@@ -136,7 +140,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} brage. Built with Docusaurus.`,
+      copyright: `Version 0.0.1 Copyright © ${new Date().getFullYear()} kniv0gaffel. Built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,
