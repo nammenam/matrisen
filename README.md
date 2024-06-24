@@ -1,4 +1,4 @@
-vulkan app written in zig with scripting capabilities with lua
+> vulkan app written in zig with scripting capabilities with lua
 
 ## TODO:
 
