@@ -19,7 +19,7 @@ const config: Config = {
   // If you aren't using GitHub pages, you don't need these.
   organizationName: 'kniv0gaffel', // Usually your GitHub org/user name.
   projectName: 'matrisen', // Usually your repo name.
-  deploymentBranch: 'main',
+  deploymentBranch: 'pages',
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
