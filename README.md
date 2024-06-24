@@ -13,3 +13,4 @@ for plotting, illustrating and animation tasks
 - [ ] png export
 - [ ] math rendering
 - [ ] typst integration
+- [ ] headless rendering
