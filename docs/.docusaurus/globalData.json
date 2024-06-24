@@ -1,0 +1,58 @@
+{
+  "docusaurus-plugin-content-docs": {
+    "default": {
+      "path": "/docs",
+      "versions": [
+        {
+          "name": "current",
+          "label": "Next",
+          "isLast": true,
+          "path": "/docs",
+          "mainDocId": "intro",
+          "docs": [
+            {
+              "id": "guide/manage-docs-versions",
+              "path": "/docs/guide/manage-docs-versions",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "guide/translate-your-site",
+              "path": "/docs/guide/translate-your-site",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "intro",
+              "path": "/docs/intro",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "reference/yurr",
+              "path": "/docs/reference/yurr",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "/category/guide",
+              "path": "/docs/category/guide",
+              "sidebar": "tutorialSidebar"
+            },
+            {
+              "id": "/category/reference",
+              "path": "/docs/category/reference",
+              "sidebar": "tutorialSidebar"
+            }
+          ],
+          "draftIds": [],
+          "sidebars": {
+            "tutorialSidebar": {
+              "link": {
+                "path": "/docs/intro",
+                "label": "intro"
+              }
+            }
+          }
+        }
+      ],
+      "breadcrumbs": true
+    }
+  }
+}

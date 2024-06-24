@@ -1,0 +1,23 @@
+{
+  "id": "reference/yurr",
+  "title": "Core",
+  "description": "",
+  "source": "@site/docs/reference/yurr.md",
+  "sourceDirName": "reference",
+  "slug": "/reference/yurr",
+  "permalink": "/docs/reference/yurr",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/kniv0gaffel/matrisen/docs/reference/yurr.md",
+  "tags": [],
+  "version": "current",
+  "sidebarPosition": 1,
+  "frontMatter": {
+    "sidebar_position": 1
+  },
+  "sidebar": "tutorialSidebar",
+  "previous": {
+    "title": "Reference",
+    "permalink": "/docs/category/reference"
+  }
+}

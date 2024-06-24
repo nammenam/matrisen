@@ -1,0 +1,24 @@
+{
+  "id": "reference/modeling",
+  "title": "modeling",
+  "description": "COMPASS",
+  "source": "@site/docs/reference/modeling.md",
+  "sourceDirName": "reference",
+  "slug": "/reference/modeling",
+  "permalink": "/docs/reference/modeling",
+  "draft": false,
+  "unlisted": false,
+  "editUrl": "https://github.com/kniv0gaffel/matrisen/docs/reference/modeling.md",
+  "tags": [],
+  "version": "current",
+  "frontMatter": {},
+  "sidebar": "tutorialSidebar",
+  "previous": {
+    "title": "Reference",
+    "permalink": "/docs/reference/"
+  },
+  "next": {
+    "title": "pressure-sensor",
+    "permalink": "/docs/reference/pressure-sensor"
+  }
+}
