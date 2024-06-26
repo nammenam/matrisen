@@ -4,9 +4,10 @@ const d = @import("vkDescriptors.zig");
 const c = @import("clibs.zig");
 const m = @import("math3d.zig");
 const s = @import("SDLutils.zig");
+const r = @import("rendertarget.zig");
+const p = @import("pipelines.zig");
 const log = std.log.scoped(.vkEngine);
-const window_extent = c.VkExtent2D{ .width = 1600, .height = 900 };
-const vk_alloc_cbs: ?*c.VkAllocationCallbacks = null;
+pub const vk_alloc_cbs: ?*c.VkAllocationCallbacks = null;
 const check_vk = vki.check_vk;
 
 const AllocatedBuffer = struct {
@@ -38,7 +39,7 @@ const FrameData = struct {
     object_descriptor_set: c.VkDescriptorSet = null,
 };
 
-const ComputePushConstants = struct {
+pub const ComputePushConstants = struct {
     data1: m.Vec4,
     data2: m.Vec4,
     data3: m.Vec4,
@@ -46,41 +47,53 @@ const ComputePushConstants = struct {
 };
 
 const Self = @This();
+// targets
+window: r.WindowManager = undefined,
+depth_image: AllocatedImage = undefined,
+draw_image: AllocatedImage = undefined,
+draw_extent: c.VkExtent2D = undefined,
+// allocators
 cpu_allocator: std.mem.Allocator = undefined,
 gpu_allocator: c.VmaAllocator = undefined,
-debug_messenger: c.VkDebugUtilsMessengerEXT = null,
-window: *c.SDL_Window = undefined,
+// instance and device
 instance: c.VkInstance = null,
 gpu: c.VkPhysicalDevice = null,
 gpu_properties: c.VkPhysicalDeviceProperties = undefined,
 device: c.VkDevice = null,
+// queues
 graphics_queue: c.VkQueue = null,
 present_queue: c.VkQueue = null,
 compute_queue: c.VkQueue = null,
 transfer_queue: c.VkQueue = null,
 graphics_queue_family: u32 = undefined,
 present_queue_family: u32 = undefined,
+// delete queues
+buffer_deletion_queue: std.ArrayList(AllocatedBuffer) = undefined,
+image_deletion_queue: std.ArrayList(AllocatedImage) = undefined,
+imageview_deletion_queue: std.ArrayList(c.VkImageView) = undefined,
+pipeline_deletion_queue: std.ArrayList(c.VkPipeline) = undefined,
+pipeline_layout_deletion_queue: std.ArrayList(c.VkPipelineLayout) = undefined,
+// swapchain and sync
 swapchain: c.VkSwapchainKHR = null,
 swapchain_format: c.VkFormat = undefined,
 swapchain_extent: c.VkExtent2D = undefined,
 swapchain_images: []c.VkImage = undefined,
 swapchain_image_views: []c.VkImageView = undefined,
-depth_image: AllocatedImage = undefined,
-draw_image: AllocatedImage = undefined,
-draw_extent: c.VkExtent2D = undefined,
-surface: c.VkSurfaceKHR = null,
 upload_context: UploadContext = .{},
-buffer_deletion_queue: std.ArrayList(AllocatedBuffer) = undefined,
-image_deletion_queue: std.ArrayList(AllocatedImage) = undefined,
-imageview_deletion_queue: std.ArrayList(c.VkImageView) = undefined,
 frames: [FRAME_OVERLAP]FrameData = .{FrameData{}} ** FRAME_OVERLAP,
 frame_number: u32 = 0,
+// descriptors
 global_descriptor_allocator: d.DescriptorAllocator = undefined,
 draw_image_descriptors: c.VkDescriptorSet = undefined,
 draw_image_descriptor_layout: c.VkDescriptorSetLayout = undefined,
-gradient_pipeline: c.VkPipeline = null,
+// pipelines
 gradient_pipeline_layout: c.VkPipelineLayout = null,
+gradient_pipeline: c.VkPipeline = null,
+triangle_pipeline_layout: c.VkPipelineLayout = null,
+triangle_pipeline: c.VkPipeline = null,
+// other
 lua_state: ?*c.lua_State,
+debug_messenger: c.VkDebugUtilsMessengerEXT = null,
 pc: ComputePushConstants = .{
     .data1 = m.Vec4{ .x = 1.0, .y = 0.0, .z = 0.0, .w = 0.0 },
     .data2 = m.Vec4{ .x = 0.0, .y = 1.0, .z = 0.0, .w = 0.0 },
@@ -91,21 +104,21 @@ pc: ComputePushConstants = .{
 const FRAME_OVERLAP = 2;
 
 pub fn init(a: std.mem.Allocator) Self {
-    check_sdl(c.SDL_Init(c.SDL_INIT_VIDEO));
-    const window = c.SDL_CreateWindow("matrisen", window_extent.width, window_extent.height, c.SDL_WINDOW_VULKAN | c.SDL_WINDOW_RESIZABLE) orelse @panic("Failed to create SDL window");
-    _ = c.SDL_ShowWindow(window);
+    const win = try r.WindowManager.init(.{.width = 1600, .height = 900});
 
     var engine = Self{
-        .window = window,
+        .window = win,
         .cpu_allocator = a,
         .buffer_deletion_queue = std.ArrayList(AllocatedBuffer).init(a),
         .image_deletion_queue = std.ArrayList(AllocatedImage).init(a),
         .imageview_deletion_queue = std.ArrayList(c.VkImageView).init(a),
+        .pipeline_deletion_queue = std.ArrayList(c.VkPipeline).init(a),
+        .pipeline_layout_deletion_queue = std.ArrayList(c.VkPipelineLayout).init(a),
         .lua_state = c.luaL_newstate(),
     };
 
     engine.init_instance();
-    check_sdl_bool(c.SDL_Vulkan_CreateSurface(window, engine.instance, vk_alloc_cbs, &engine.surface));
+    engine.window.create_surface(&engine);
     engine.init_device();
 
     const allocator_ci = std.mem.zeroInit(c.VmaAllocatorCreateInfo, .{
@@ -120,7 +133,7 @@ pub fn init(a: std.mem.Allocator) Self {
     engine.init_commands();
     engine.init_sync_structures();
     engine.init_descriptors();
-    engine.init_pipelines();
+    p.init_pipelines(&engine);
     c.luaL_openlibs(engine.lua_state);
     return engine;
 }
@@ -152,7 +165,7 @@ pub fn run(self: *Self) void {
                                 } else {
                                     std.log.err("Failed to run script: Unknown error", .{});
                                 }
-                            } 
+                            }
                         } else {
                             std.log.err("Failed to load script: {s}", .{script_path});
                         }
@@ -182,11 +195,18 @@ pub fn cleanup(self: *Self) void {
         c.vmaDestroyBuffer(self.gpu_allocator, entry.buffer, entry.allocation);
     }
     self.buffer_deletion_queue.deinit();
+    while (self.pipeline_deletion_queue.popOrNull()) |entry| {
+        c.vkDestroyPipeline(self.device, entry, vk_alloc_cbs);
+    }
+    self.pipeline_deletion_queue.deinit();
+    while (self.pipeline_layout_deletion_queue.popOrNull()) |entry| {
+        c.vkDestroyPipelineLayout(self.device, entry, vk_alloc_cbs);
+    }
+    self.pipeline_layout_deletion_queue.deinit();
+
     c.vkDestroyDescriptorSetLayout(self.device, self.draw_image_descriptor_layout, vk_alloc_cbs);
     self.global_descriptor_allocator.clear_descriptors(self.device);
     self.global_descriptor_allocator.destroy_pool(self.device);
-    c.vkDestroyPipelineLayout(self.device, self.gradient_pipeline_layout, vk_alloc_cbs);
-    c.vkDestroyPipeline(self.device, self.gradient_pipeline, vk_alloc_cbs);
     for (self.frames) |frame| {
         c.vkDestroyCommandPool(self.device, frame.command_pool, vk_alloc_cbs);
         c.vkDestroyFence(self.device, frame.render_fence, vk_alloc_cbs);
@@ -200,15 +220,14 @@ pub fn cleanup(self: *Self) void {
     self.cpu_allocator.free(self.swapchain_images);
     c.vmaDestroyAllocator(self.gpu_allocator);
     c.vkDestroyDevice(self.device, vk_alloc_cbs);
-    c.vkDestroySurfaceKHR(self.instance, self.surface, vk_alloc_cbs);
+    c.vkDestroySurfaceKHR(self.instance, self.window.surface, vk_alloc_cbs);
     if (self.debug_messenger != null) {
         const destroy_fn = vki.get_destroy_debug_utils_messenger_fn(self.instance).?;
         destroy_fn(self.instance, self.debug_messenger, vk_alloc_cbs);
     }
-    c.SDL_DestroyWindow(self.window);
+    self.window.deinit();
     c.vkDestroyInstance(self.instance, vk_alloc_cbs);
     c.lua_close(self.lua_state);
-    c.SDL_Quit();
 }
 
 pub fn immediate_submit(self: *Self, submit_ctx: anytype) void {
@@ -302,7 +321,9 @@ fn draw(self: *Self) void {
 
     vki.transition_image(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_GENERAL);
     self.draw_background(cmd);
-    vki.transition_image(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_GENERAL, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    vki.transition_image(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_GENERAL, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    self.draw_geometry(cmd);
+    vki.transition_image(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
     vki.transition_image(cmd, self.swapchain_images[swapchain_image_index], c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     vki.copy_image_to_image(cmd, self.draw_image.image, self.swapchain_images[swapchain_image_index], self.draw_extent, self.swapchain_extent);
@@ -358,6 +379,49 @@ fn draw_background(self: *Self, cmd: c.VkCommandBuffer) void {
     c.vkCmdDispatch(cmd, self.draw_extent.width / 16, self.draw_extent.height / 16, 1);
 }
 
+fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
+    const color_attachment = std.mem.zeroInit(c.VkRenderingAttachmentInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView = self.draw_image.view,
+        .imageLayout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .loadOp = c.VK_ATTACHMENT_LOAD_OP_LOAD,
+        .storeOp = c.VK_ATTACHMENT_STORE_OP_STORE,
+    });
+
+    const render_info = std.mem.zeroInit(c.VkRenderingInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .renderArea = .{
+            .offset = .{ .x = 0, .y = 0 },
+            .extent = self.draw_extent,
+        },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &color_attachment,
+    });
+
+    c.vkCmdBeginRendering(cmd, &render_info);
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.triangle_pipeline);
+    const viewport = std.mem.zeroInit(c.VkViewport, .{
+        .x = 0.0,
+        .y = 0.0,
+        .width = @as(f32,@floatFromInt(self.draw_extent.width)),
+        .height = @as(f32,@floatFromInt(self.draw_extent.height)),
+        .minDepth = 0.0,
+        .maxDepth = 1.0,
+    });
+
+    c.vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+    const scissor = std.mem.zeroInit(c.VkRect2D, .{
+        .offset = .{ .x = 0, .y = 0 },
+        .extent = self.draw_extent,
+    }); 
+
+    c.vkCmdSetScissor(cmd, 0, 1, &scissor);
+    c.vkCmdDraw(cmd, 3, 1, 0, 0);
+    c.vkCmdEndRendering(cmd);
+}
+
 fn init_descriptors(self: *Self) void {
     var sizes = [_]d.DescriptorAllocator.PoolSizeRatio{
         .{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .ratio = 10 },
@@ -391,50 +455,6 @@ fn init_descriptors(self: *Self) void {
     c.vkUpdateDescriptorSets(self.device, 1, &write, 0, null);
 }
 
-fn init_pipelines(self: *Self) void {
-    self.init_background_pipelines();
-}
-
-fn init_background_pipelines(self: *Self) void {
-    var compute_layout = std.mem.zeroInit(c.VkPipelineLayoutCreateInfo, .{
-        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1,
-        .pSetLayouts = &self.draw_image_descriptor_layout,
-    });
-
-    const push_constant_range = std.mem.zeroInit(c.VkPushConstantRange, .{
-        .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT,
-        .offset = 0,
-        .size = @sizeOf(ComputePushConstants),
-    });
-
-    compute_layout.pPushConstantRanges = &push_constant_range;
-    compute_layout.pushConstantRangeCount = 1;
-
-    check_vk(c.vkCreatePipelineLayout(self.device, &compute_layout, null, &self.gradient_pipeline_layout)) catch @panic("Failed to create pipeline layout");
-
-    const comp_code align(4) = @embedFile("gradient.comp").*;
-    const comp_module = vki.create_shader_module(self.device, &comp_code, vk_alloc_cbs) orelse null;
-    if (comp_module != null) log.info("Created compute shader module", .{});
-
-    const stage_ci = std.mem.zeroInit(c.VkPipelineShaderStageCreateInfo, .{
-        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .stage = c.VK_SHADER_STAGE_COMPUTE_BIT,
-        .module = comp_module,
-        .pName = "main",
-    });
-
-    const compute_ci = std.mem.zeroInit(c.VkComputePipelineCreateInfo, .{
-        .sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-        .layout = self.gradient_pipeline_layout,
-        .stage = stage_ci,
-    });
-
-    check_vk(c.vkCreateComputePipelines(self.device, null, 1, &compute_ci, null, &self.gradient_pipeline)) catch @panic("Failed to create compute pipeline");
-
-    c.vkDestroyShaderModule(self.device, comp_module, vk_alloc_cbs);
-}
-
 fn init_instance(self: *Self) void {
     var sdl_required_extension_count: u32 = undefined;
     const sdl_extensions = c.SDL_Vulkan_GetInstanceExtensions(&sdl_required_extension_count);
@@ -464,7 +484,7 @@ fn init_device(self: *Self) void {
     const physical_device = vki.PhysicalDevice.select(std.heap.page_allocator, self.instance, .{
         .min_api_version = c.VK_MAKE_VERSION(1, 3, 0),
         .required_extensions = required_device_extensions,
-        .surface = self.surface,
+        .surface = self.window.surface,
         .criteria = .PreferDiscrete,
     }) catch |err| {
         log.err("Failed to select physical device with error: {s}", .{@errorName(err)});
@@ -519,14 +539,14 @@ fn init_device(self: *Self) void {
 fn init_swapchain(self: *Self) void {
     var win_width: c_int = undefined;
     var win_height: c_int = undefined;
-    check_sdl(c.SDL_GetWindowSize(self.window, &win_width, &win_height));
+    r.check_sdl(c.SDL_GetWindowSize(self.window.window, &win_width, &win_height));
 
     const swapchain = vki.Swapchain.create(self.cpu_allocator, .{
         .physical_device = self.gpu,
         .graphics_queue_family = self.graphics_queue_family,
         .present_queue_family = self.graphics_queue_family,
         .device = self.device,
-        .surface = self.surface,
+        .surface = self.window.surface,
         .old_swapchain = null,
         .vsync = true,
         .window_width = @intCast(win_width),
@@ -686,18 +706,4 @@ fn init_sync_structures(self: *Self) void {
 
     check_vk(c.vkCreateFence(self.device, &upload_fence_ci, vk_alloc_cbs, &self.upload_context.upload_fence)) catch @panic("Failed to create upload fence");
     log.info("Created sync structures", .{});
-}
-
-fn check_sdl(res: c_int) void {
-    if (res != 0) {
-        std.log.err("Detected SDL error: {s}", .{c.SDL_GetError()});
-        @panic("SDL error");
-    }
-}
-
-fn check_sdl_bool(res: c.SDL_bool) void {
-    if (res != c.SDL_TRUE) {
-        std.log.err("Detected SDL error: {s}", .{c.SDL_GetError()});
-        @panic("SDL error");
-    }
 }

@@ -20,6 +20,7 @@
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
 }
 
+
 h2, h3, h4, h5, h6 {
   font-family: 'DM sans', sans-serif;
   font-style: italic;
@@ -30,7 +31,7 @@ h1 {
 }
 
 a {
-  font-family: 'Dm sans', sans-serif;
+  font-family: 'DM sans', sans-serif;
 }
 
 
