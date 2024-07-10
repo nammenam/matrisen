@@ -6,51 +6,16 @@ const m = @import("math3d.zig");
 const s = @import("SDLutils.zig");
 const r = @import("rendertarget.zig");
 const p = @import("pipelines.zig");
+const t = @import("types.zig");
 const log = std.log.scoped(.vkEngine);
 pub const vk_alloc_cbs: ?*c.VkAllocationCallbacks = null;
 const check_vk = vki.check_vk;
 
-const AllocatedBuffer = struct {
-    buffer: c.VkBuffer,
-    allocation: c.VmaAllocation,
-};
-
-const AllocatedImage = struct {
-    image: c.VkImage,
-    allocation: c.VmaAllocation,
-    extent: c.VkExtent3D,
-    format: c.VkFormat,
-    view: c.VkImageView,
-};
-
-const UploadContext = struct {
-    upload_fence: c.VkFence = null,
-    command_pool: c.VkCommandPool = null,
-    command_buffer: c.VkCommandBuffer = null,
-};
-
-const FrameData = struct {
-    present_semaphore: c.VkSemaphore = null,
-    render_semaphore: c.VkSemaphore = null,
-    render_fence: c.VkFence = null,
-    command_pool: c.VkCommandPool = null,
-    main_command_buffer: c.VkCommandBuffer = null,
-    object_buffer: AllocatedBuffer = .{ .buffer = null, .allocation = null },
-    object_descriptor_set: c.VkDescriptorSet = null,
-};
-
-pub const ComputePushConstants = struct {
-    data1: m.Vec4,
-    data2: m.Vec4,
-    data3: m.Vec4,
-    data4: m.Vec4,
-};
-
 const Self = @This();
 // targets
 window: r.WindowManager = undefined,
-depth_image: AllocatedImage = undefined,
-draw_image: AllocatedImage = undefined,
+depth_image: t.AllocatedImage = undefined,
+draw_image: t.AllocatedImage = undefined,
 draw_extent: c.VkExtent2D = undefined,
 // allocators
 cpu_allocator: std.mem.Allocator = undefined,
@@ -68,8 +33,8 @@ transfer_queue: c.VkQueue = null,
 graphics_queue_family: u32 = undefined,
 present_queue_family: u32 = undefined,
 // delete queues
-buffer_deletion_queue: std.ArrayList(AllocatedBuffer) = undefined,
-image_deletion_queue: std.ArrayList(AllocatedImage) = undefined,
+buffer_deletion_queue: std.ArrayList(t.AllocatedBuffer) = undefined,
+image_deletion_queue: std.ArrayList(t.AllocatedImage) = undefined,
 imageview_deletion_queue: std.ArrayList(c.VkImageView) = undefined,
 pipeline_deletion_queue: std.ArrayList(c.VkPipeline) = undefined,
 pipeline_layout_deletion_queue: std.ArrayList(c.VkPipelineLayout) = undefined,
@@ -79,8 +44,8 @@ swapchain_format: c.VkFormat = undefined,
 swapchain_extent: c.VkExtent2D = undefined,
 swapchain_images: []c.VkImage = undefined,
 swapchain_image_views: []c.VkImageView = undefined,
-upload_context: UploadContext = .{},
-frames: [FRAME_OVERLAP]FrameData = .{FrameData{}} ** FRAME_OVERLAP,
+upload_context: t.UploadContext = .{},
+frames: [FRAME_OVERLAP]t.FrameData = .{t.FrameData{}} ** FRAME_OVERLAP,
 frame_number: u32 = 0,
 // descriptors
 global_descriptor_allocator: d.DescriptorAllocator = undefined,
@@ -94,7 +59,7 @@ triangle_pipeline: c.VkPipeline = null,
 // other
 lua_state: ?*c.lua_State,
 debug_messenger: c.VkDebugUtilsMessengerEXT = null,
-pc: ComputePushConstants = .{
+pc: t.ComputePushConstants = .{
     .data1 = m.Vec4{ .x = 1.0, .y = 0.0, .z = 0.0, .w = 0.0 },
     .data2 = m.Vec4{ .x = 0.0, .y = 1.0, .z = 0.0, .w = 0.0 },
     .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
@@ -104,13 +69,13 @@ pc: ComputePushConstants = .{
 const FRAME_OVERLAP = 2;
 
 pub fn init(a: std.mem.Allocator) Self {
-    const win = try r.WindowManager.init(.{.width = 1600, .height = 900});
+    const win = try r.WindowManager.init(.{ .width = 1600, .height = 900 });
 
     var engine = Self{
         .window = win,
         .cpu_allocator = a,
-        .buffer_deletion_queue = std.ArrayList(AllocatedBuffer).init(a),
-        .image_deletion_queue = std.ArrayList(AllocatedImage).init(a),
+        .buffer_deletion_queue = std.ArrayList(t.AllocatedBuffer).init(a),
+        .image_deletion_queue = std.ArrayList(t.AllocatedImage).init(a),
         .imageview_deletion_queue = std.ArrayList(c.VkImageView).init(a),
         .pipeline_deletion_queue = std.ArrayList(c.VkPipeline).init(a),
         .pipeline_layout_deletion_queue = std.ArrayList(c.VkPipelineLayout).init(a),
@@ -375,7 +340,7 @@ fn draw(self: *Self) void {
 fn draw_background(self: *Self, cmd: c.VkCommandBuffer) void {
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.gradient_pipeline);
     c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.gradient_pipeline_layout, 0, 1, &self.draw_image_descriptors, 0, null);
-    c.vkCmdPushConstants(cmd, self.gradient_pipeline_layout, c.VK_SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(ComputePushConstants), &self.pc);
+    c.vkCmdPushConstants(cmd, self.gradient_pipeline_layout, c.VK_SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(t.ComputePushConstants), &self.pc);
     c.vkCmdDispatch(cmd, self.draw_extent.width / 16, self.draw_extent.height / 16, 1);
 }
 
@@ -404,8 +369,8 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
     const viewport = std.mem.zeroInit(c.VkViewport, .{
         .x = 0.0,
         .y = 0.0,
-        .width = @as(f32,@floatFromInt(self.draw_extent.width)),
-        .height = @as(f32,@floatFromInt(self.draw_extent.height)),
+        .width = @as(f32, @floatFromInt(self.draw_extent.width)),
+        .height = @as(f32, @floatFromInt(self.draw_extent.height)),
         .minDepth = 0.0,
         .maxDepth = 1.0,
     });
@@ -415,11 +380,56 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
     const scissor = std.mem.zeroInit(c.VkRect2D, .{
         .offset = .{ .x = 0, .y = 0 },
         .extent = self.draw_extent,
-    }); 
+    });
 
     c.vkCmdSetScissor(cmd, 0, 1, &scissor);
     c.vkCmdDraw(cmd, 3, 1, 0, 0);
     c.vkCmdEndRendering(cmd);
+}
+
+fn create_buffer(self: *Self, alloc_size: usize, usage: c.VkBufferUsageFlags, memory_usage: c.VmaMemoryUsage) t.AllocatedBuffer {
+    const buffer_info = std.mem.zeroInit(c.VkBufferCreateInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = @intCast(alloc_size),
+        .usage = usage,
+    });
+
+    const vma_alloc_info = std.mem.zeroInit(c.VmaAllocationCreateInfo, .{
+        .usage = memory_usage,
+        .flags = c.VMA_ALLOCATION_CREATE_MAPPED_BIT,
+    });
+
+    const new_buffer: t.AllocatedBuffer = undefined;
+    check_vk(c.vmaCreateBuffer(self.gpu_allocator, &buffer_info, &vma_alloc_info, &new_buffer.buffer, &new_buffer.allocation, &new_buffer.info)) catch @panic("Failed to create buffer");
+    return new_buffer;
+}
+
+fn destroy_buffer(self: *Self, buffer: *const t.AllocatedBuffer) void {
+    c.vmaDestroyBuffer(self.gpu_allocator, buffer.buffer, buffer.allocation);
+}
+
+fn upload_mesh(self: *Self, indices: []u32, vertices: []t.Vertex) void {
+    const index_buffer_size = @sizeOf(u32) * indices.len;
+    const vertex_buffer_size = @sizeOf(t.Vertex) * vertices.len;
+
+    const new_surface: t.GPUMeshBuffers = undefined;
+    new_surface.vertex_buffer = self.create_buffer(vertex_buffer_size, c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+        c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, c.VMA_MEMORY_USAGE_GPU_ONLY);
+
+    const device_address_info = std.mem.zeroInit(c.VkBufferDeviceAddressInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .buffer = new_surface.vertex_buffer.buffer,
+    });
+
+    new_surface.vertex_buffer_adress = c.vkGetBufferDeviceAddress(self.device, &device_address_info);
+    new_surface.index_buffer = self.create_buffer(index_buffer_size, c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+        c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, c.VMA_MEMORY_USAGE_GPU_ONLY);
+
+    const staging = self.create_buffer(index_buffer_size + vertex_buffer_size, c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, c.VMA_MEMORY_USAGE_CPU_ONLY);
+
+    const data = staging.allocation.GetMappedData();
+
+    std.mem.copyForwards(u32, vertices, data);
 }
 
 fn init_descriptors(self: *Self) void {

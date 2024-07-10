@@ -1,6 +1,7 @@
 const engine = @import("vkEngine.zig");
 const std = @import("std");
 const c = @import("clibs.zig");
+const t = @import("types.zig");
 const vki = @import("vkUtils.zig");
 const check_vk = vki.check_vk;
 const log = std.log.scoped(.pipelines);
@@ -20,7 +21,7 @@ fn init_background_pipelines(self: *engine) void {
     const push_constant_range = std.mem.zeroInit(c.VkPushConstantRange, .{
         .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT,
         .offset = 0,
-        .size = @sizeOf(engine.ComputePushConstants),
+        .size = @sizeOf(t.ComputePushConstants),
     });
 
     compute_layout.pPushConstantRanges = &push_constant_range;

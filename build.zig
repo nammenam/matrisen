@@ -3,11 +3,12 @@ const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
+    const target = b.standardTargetOptions(.{});
 
     const exe = b.addExecutable(.{
         .name = "matrisen",
-        .root_source_file = .{ .path = "src/main.zig" },
-        .target = b.host,
+        .root_source_file = b.path( "src/main.zig"),
+        .target = target,
         .optimize = optimize,
     });
     exe.linkLibCpp();
@@ -17,8 +18,8 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary("lua5.4");
     exe.linkSystemLibrary("vulkan");
 
-    exe.addCSourceFile(.{ .file = .{ .path = "src/vk_mem_alloc.cpp" }, .flags = &.{""} });
-    exe.addCSourceFile(.{ .file = .{ .path = "src/stb_image.c" }, .flags = &.{""} });
+    exe.addCSourceFile(.{ .file = b.path("src/vk_mem_alloc.cpp"), .flags = &.{""} });
+    exe.addCSourceFile(.{ .file = b.path("src/stb_image.c"), .flags = &.{""} });
     compile_all_shaders(b, exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -33,7 +34,7 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = b.host,
         .optimize = optimize,
     });
@@ -72,7 +73,7 @@ fn add_shader(b: *std.Build, exe: *std.Build.Step.Compile, name: []const u8) voi
     shader_compilation.addArg("-V");
     shader_compilation.addArg("-o");
     const output = shader_compilation.addOutputFileArg(outpath);
-    shader_compilation.addFileArg(.{ .path = source });
+    shader_compilation.addFileArg(b.path(source));
 
     exe.root_module.addAnonymousImport(name, .{ .root_source_file = output });
 }
