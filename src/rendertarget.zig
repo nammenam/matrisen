@@ -8,7 +8,7 @@ pub const WindowManager = struct {
 
     pub fn init(window_extent: c.VkExtent2D) !WindowManager {
         check_sdl(c.SDL_Init(c.SDL_INIT_VIDEO));
-        const window = c.SDL_CreateWindow("matrisen", @intCast(window_extent.width), @intCast(window_extent.height), c.SDL_WINDOW_VULKAN | c.SDL_WINDOW_RESIZABLE) orelse @panic("Failed to create SDL window");
+        const window = c.SDL_CreateWindow("matrisen", @intCast(window_extent.width), @intCast(window_extent.height), c.SDL_WINDOW_VULKAN | c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_UTILITY) orelse @panic("Failed to create SDL window");
         _ = c.SDL_ShowWindow(window);
         return .{ .window = window, .surface = undefined };
     }
@@ -19,7 +19,7 @@ pub const WindowManager = struct {
     }
 
     pub fn create_surface(self: *WindowManager, e: *engine) void {
-        check_sdl_bool(c.SDL_Vulkan_CreateSurface(self.window, e.instance, engine.vk_alloc_cbs, &self.surface));
+        check_sdl(c.SDL_Vulkan_CreateSurface(self.window, e.instance, engine.vk_alloc_cbs, &self.surface));
     }
 };
 

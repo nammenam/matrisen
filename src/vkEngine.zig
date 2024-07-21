@@ -15,7 +15,13 @@ const Self = @This();
 // targets
 window: r.WindowManager = undefined,
 depth_image: t.AllocatedImage = undefined,
+depth_image_view: c.VkImageView = undefined,
+depth_image_format: c.VkFormat = undefined,
+depth_image_extent: c.VkExtent3D = undefined,
 draw_image: t.AllocatedImage = undefined,
+draw_image_view: c.VkImageView = undefined,
+draw_image_format: c.VkFormat = undefined,
+draw_image_extent: c.VkExtent3D = undefined,
 draw_extent: c.VkExtent2D = undefined,
 // allocators
 cpu_allocator: std.mem.Allocator = undefined,
@@ -44,7 +50,9 @@ swapchain_format: c.VkFormat = undefined,
 swapchain_extent: c.VkExtent2D = undefined,
 swapchain_images: []c.VkImage = undefined,
 swapchain_image_views: []c.VkImageView = undefined,
-upload_context: t.UploadContext = .{},
+immidiate_fence: c.VkFence = null,
+immidiate_command_buffer: c.VkCommandBuffer = null,
+immidiate_command_pool: c.VkCommandPool = null,
 frames: [FRAME_OVERLAP]t.FrameData = .{t.FrameData{}} ** FRAME_OVERLAP,
 frame_number: u32 = 0,
 // descriptors
@@ -56,6 +64,10 @@ gradient_pipeline_layout: c.VkPipelineLayout = null,
 gradient_pipeline: c.VkPipeline = null,
 triangle_pipeline_layout: c.VkPipelineLayout = null,
 triangle_pipeline: c.VkPipeline = null,
+mesh_pipeline_layout: c.VkPipelineLayout = null,
+mesh_pipeline: c.VkPipeline = null,
+
+rectangle: t.GPUMeshBuffers = undefined,
 // other
 lua_state: ?*c.lua_State,
 debug_messenger: c.VkDebugUtilsMessengerEXT = null,
@@ -98,6 +110,7 @@ pub fn init(a: std.mem.Allocator) Self {
     engine.init_commands();
     engine.init_sync_structures();
     engine.init_descriptors();
+    engine.init_default_data();
     p.init_pipelines(&engine);
     c.luaL_openlibs(engine.lua_state);
     return engine;
@@ -117,7 +130,7 @@ pub fn run(self: *Self) void {
                 },
                 c.SDL_EVENT_KEY_DOWN => {
                     s.handle_key_down(self, event.key);
-                    if (event.key.keysym.sym == c.SDLK_r) {
+                    if (event.key.key == c.SDLK_R) {
                         // Reload and execute Lua script when 'R' is pressed
                         const script_path = "script.lua";
                         if (c.luaL_loadfilex(self.lua_state, script_path, null) == 0) {
@@ -178,8 +191,8 @@ pub fn cleanup(self: *Self) void {
         c.vkDestroySemaphore(self.device, frame.render_semaphore, vk_alloc_cbs);
         c.vkDestroySemaphore(self.device, frame.present_semaphore, vk_alloc_cbs);
     }
-    c.vkDestroyFence(self.device, self.upload_context.upload_fence, vk_alloc_cbs);
-    c.vkDestroyCommandPool(self.device, self.upload_context.command_pool, vk_alloc_cbs);
+    c.vkDestroyFence(self.device, self.immidiate_fence, vk_alloc_cbs);
+    c.vkDestroyCommandPool(self.device, self.immidiate_command_pool, vk_alloc_cbs);
     c.vkDestroySwapchainKHR(self.device, self.swapchain, vk_alloc_cbs);
     self.cpu_allocator.free(self.swapchain_image_views);
     self.cpu_allocator.free(self.swapchain_images);
@@ -236,9 +249,9 @@ pub fn immediate_submit(self: *Self, submit_ctx: anytype) void {
             @compileError("Context submit method second parameter should be of type: " ++ @typeName(c.VkCommandBuffer));
         }
     }
-    check_vk(c.vkResetFences(self.device, 1, &self.upload_context.upload_fence)) catch @panic("Failed to reset upload fence");
-    check_vk(c.vkResetCommandBuffer(self.upload_context.command_buffer, 0)) catch @panic("Failed to reset command buffer");
-    const cmd = self.upload_context.command_buffer;
+    check_vk(c.vkResetFences(self.device, 1, &self.immidiate_fence)) catch @panic("Failed to reset immidiate fence");
+    check_vk(c.vkResetCommandBuffer(self.immidiate_command_buffer, 0)) catch @panic("Failed to reset immidiate command buffer");
+    const cmd = self.immidiate_command_buffer;
 
     const commmand_begin_ci = std.mem.zeroInit(c.VkCommandBufferBeginInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -260,12 +273,71 @@ pub fn immediate_submit(self: *Self, submit_ctx: anytype) void {
         .pCommandBufferInfos = &cmd_info,
     });
 
-    check_vk(c.vkQueueSubmit2(self.graphics_queue, 1, &submit_info, self.upload_context.upload_fence)) catch @panic("Failed to submit to graphics queue");
-    check_vk(c.vkWaitForFences(self.device, 1, &self.upload_context.upload_fence, c.VK_TRUE, 1_000_000_000)) catch @panic("Failed to wait for upload fence");
+    check_vk(c.vkQueueSubmit2(self.graphics_queue, 1, &submit_info, self.immidiate_fence)) catch @panic("Failed to submit to graphics queue");
+    check_vk(c.vkWaitForFences(self.device, 1, &self.immidiate_fence, c.VK_TRUE, 1_000_000_000)) catch @panic("Failed to wait for immidiate fence");
+}
+
+pub fn upload_mesh(self: *Self, indices: []u32, vertices: []t.Vertex) t.GPUMeshBuffers {
+    const index_buffer_size = @sizeOf(u32) * indices.len;
+    const vertex_buffer_size = @sizeOf(t.Vertex) * vertices.len;
+
+    var new_surface: t.GPUMeshBuffers = undefined;
+    new_surface.vertex_buffer = self.create_buffer(vertex_buffer_size, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+        c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, c.VMA_MEMORY_USAGE_GPU_ONLY);
+
+    const device_address_info = std.mem.zeroInit(c.VkBufferDeviceAddressInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .buffer = new_surface.vertex_buffer.buffer,
+    });
+
+    new_surface.vertex_buffer_adress = c.vkGetBufferDeviceAddress(self.device, &device_address_info);
+    new_surface.index_buffer = self.create_buffer(index_buffer_size, c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+        c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, c.VMA_MEMORY_USAGE_GPU_ONLY);
+
+    const staging = self.create_buffer(index_buffer_size + vertex_buffer_size, c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, c.VMA_MEMORY_USAGE_CPU_ONLY);
+
+    var data: ?*anyopaque = undefined;
+    check_vk(c.vmaMapMemory(self.gpu_allocator, staging.allocation, &data)) catch @panic("Failed to map memory");
+    defer c.vmaDestroyBuffer(self.gpu_allocator, staging.buffer, staging.allocation);
+    defer c.vmaUnmapMemory(self.gpu_allocator, staging.allocation);
+    const byte_data = @as([*]u8, @ptrCast(data.?))[0..(vertex_buffer_size + index_buffer_size)];
+    @memcpy(byte_data[0..vertex_buffer_size], std.mem.sliceAsBytes(vertices));
+    @memcpy(byte_data[vertex_buffer_size..], std.mem.sliceAsBytes(indices));
+    const submit_ctx = struct {
+        vertex_buffer: c.VkBuffer,
+        index_buffer: c.VkBuffer,
+        staging_buffer: c.VkBuffer,
+        vertex_buffer_size: usize,
+        index_buffer_size: usize,
+        fn submit(sself: @This(), cmd: c.VkCommandBuffer) void {
+            const vertex_copy_region = std.mem.zeroInit(c.VkBufferCopy, .{
+                .srcOffset = 0,
+                .dstOffset = 0,
+                .size = sself.vertex_buffer_size,
+            });
+
+            const index_copy_region = std.mem.zeroInit(c.VkBufferCopy, .{
+                .srcOffset = sself.vertex_buffer_size,
+                .dstOffset = 0,
+                .size = sself.index_buffer_size,
+            });
+
+            c.vkCmdCopyBuffer(cmd, sself.staging_buffer, sself.vertex_buffer, 1, &vertex_copy_region);
+            c.vkCmdCopyBuffer(cmd, sself.staging_buffer, sself.index_buffer, 1, &index_copy_region);
+        }
+    }{
+        .vertex_buffer = new_surface.vertex_buffer.buffer,
+        .index_buffer = new_surface.index_buffer.buffer,
+        .staging_buffer = staging.buffer,
+        .vertex_buffer_size = vertex_buffer_size,
+        .index_buffer_size = index_buffer_size,
+    };
+    self.immediate_submit(submit_ctx);
+    return new_surface;
 }
 
 fn draw(self: *Self) void {
-    const timeout: u64 = 1_000_000; // 1 second in nanonesconds
+    const timeout: u64 = 1_000_000_000; // 1 second in nanonesconds
     const frame = self.frames[@intCast(@mod(self.frame_number, FRAME_OVERLAP))]; // Get the current frame data
     check_vk(c.vkWaitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, timeout)) catch @panic("Failed to wait for render fence");
     check_vk(c.vkResetFences(self.device, 1, &frame.render_fence)) catch @panic("Failed to reset render fence");
@@ -279,8 +351,8 @@ fn draw(self: *Self) void {
         .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     });
 
-    self.draw_extent.width = self.draw_image.extent.width;
-    self.draw_extent.height = self.draw_image.extent.height;
+    self.draw_extent.width = self.draw_image_extent.width;
+    self.draw_extent.height = self.draw_image_extent.height;
 
     check_vk(c.vkBeginCommandBuffer(cmd, &cmd_begin_info)) catch @panic("Failed to begin command buffer");
 
@@ -347,7 +419,7 @@ fn draw_background(self: *Self, cmd: c.VkCommandBuffer) void {
 fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
     const color_attachment = std.mem.zeroInit(c.VkRenderingAttachmentInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .imageView = self.draw_image.view,
+        .imageView = self.draw_image_view,
         .imageLayout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         .loadOp = c.VK_ATTACHMENT_LOAD_OP_LOAD,
         .storeOp = c.VK_ATTACHMENT_STORE_OP_STORE,
@@ -384,13 +456,22 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
 
     c.vkCmdSetScissor(cmd, 0, 1, &scissor);
     c.vkCmdDraw(cmd, 3, 1, 0, 0);
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.mesh_pipeline);
+    const push_constants = t.GPUDrawPushConstants{
+        .model = m.Mat4.IDENTITY,
+        .vertex_buffer = self.rectangle.vertex_buffer_adress,
+    };
+
+    c.vkCmdPushConstants(cmd, self.mesh_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(t.GPUDrawPushConstants), &push_constants);
+    c.vkCmdBindIndexBuffer(cmd, self.rectangle.index_buffer.buffer, 0, c.VK_INDEX_TYPE_UINT32);
+    c.vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
     c.vkCmdEndRendering(cmd);
 }
 
 fn create_buffer(self: *Self, alloc_size: usize, usage: c.VkBufferUsageFlags, memory_usage: c.VmaMemoryUsage) t.AllocatedBuffer {
     const buffer_info = std.mem.zeroInit(c.VkBufferCreateInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = @intCast(alloc_size),
+        .size = alloc_size,
         .usage = usage,
     });
 
@@ -399,37 +480,23 @@ fn create_buffer(self: *Self, alloc_size: usize, usage: c.VkBufferUsageFlags, me
         .flags = c.VMA_ALLOCATION_CREATE_MAPPED_BIT,
     });
 
-    const new_buffer: t.AllocatedBuffer = undefined;
+    var new_buffer: t.AllocatedBuffer = undefined;
     check_vk(c.vmaCreateBuffer(self.gpu_allocator, &buffer_info, &vma_alloc_info, &new_buffer.buffer, &new_buffer.allocation, &new_buffer.info)) catch @panic("Failed to create buffer");
     return new_buffer;
 }
 
-fn destroy_buffer(self: *Self, buffer: *const t.AllocatedBuffer) void {
-    c.vmaDestroyBuffer(self.gpu_allocator, buffer.buffer, buffer.allocation);
-}
-
-fn upload_mesh(self: *Self, indices: []u32, vertices: []t.Vertex) void {
-    const index_buffer_size = @sizeOf(u32) * indices.len;
-    const vertex_buffer_size = @sizeOf(t.Vertex) * vertices.len;
-
-    const new_surface: t.GPUMeshBuffers = undefined;
-    new_surface.vertex_buffer = self.create_buffer(vertex_buffer_size, c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-        c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, c.VMA_MEMORY_USAGE_GPU_ONLY);
-
-    const device_address_info = std.mem.zeroInit(c.VkBufferDeviceAddressInfo, .{
-        .sType = c.VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-        .buffer = new_surface.vertex_buffer.buffer,
-    });
-
-    new_surface.vertex_buffer_adress = c.vkGetBufferDeviceAddress(self.device, &device_address_info);
-    new_surface.index_buffer = self.create_buffer(index_buffer_size, c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-        c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, c.VMA_MEMORY_USAGE_GPU_ONLY);
-
-    const staging = self.create_buffer(index_buffer_size + vertex_buffer_size, c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, c.VMA_MEMORY_USAGE_CPU_ONLY);
-
-    const data = staging.allocation.GetMappedData();
-
-    std.mem.copyForwards(u32, vertices, data);
+fn init_default_data(self: *Self) void {
+    var rect_vertices = [_]t.Vertex{
+        .{ .position = m.Vec3{ .x = 0.5, .y = -0.5, .z = 0.0 }, .color = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 1.0 } },
+        .{ .position = m.Vec3{ .x = 0.5, .y = 0.5, .z = 0.0 }, .color = m.Vec4{ .x = 0.5, .y = 0.5, .z = 0.5, .w = 1.0 } },
+        .{ .position = m.Vec3{ .x = -0.5, .y = -0.5, .z = 0.0 }, .color = m.Vec4{ .x = 1.0, .y = 0.0, .z = 0.0, .w = 1.0 } },
+        .{ .position = m.Vec3{ .x = -0.5, .y = 0.5, .z = 0.0 }, .color = m.Vec4{ .x = 0.0, .y = 1.0, .z = 0.0, .w = 1.0 } },
+    };
+    var rect_indices = [_]u32{ 0, 1, 2, 2, 1, 3 };
+    self.rectangle = self.upload_mesh(&rect_indices, &rect_vertices);
+    self.buffer_deletion_queue.append(self.rectangle.vertex_buffer) catch @panic("Out of memory");
+    self.buffer_deletion_queue.append(self.rectangle.index_buffer) catch @panic("Out of memory");
+    std.log.info("Initialized default data", .{});
 }
 
 fn init_descriptors(self: *Self) void {
@@ -449,7 +516,7 @@ fn init_descriptors(self: *Self) void {
     self.draw_image_descriptors = self.global_descriptor_allocator.allocate(self.device, self.draw_image_descriptor_layout);
 
     const image_info = std.mem.zeroInit(c.VkDescriptorImageInfo, .{
-        .imageView = self.draw_image.view,
+        .imageView = self.draw_image_view,
         .imageLayout = c.VK_IMAGE_LAYOUT_GENERAL,
     });
 
@@ -463,6 +530,7 @@ fn init_descriptors(self: *Self) void {
     });
 
     c.vkUpdateDescriptorSets(self.device, 1, &write, 0, null);
+    log.info("Initialized descriptors", .{});
 }
 
 fn init_instance(self: *Self) void {
@@ -573,17 +641,17 @@ fn init_swapchain(self: *Self) void {
     for (self.swapchain_image_views) |view|
         self.imageview_deletion_queue.append(view) catch @panic("Out of memory");
     log.info("Created swapchain", .{});
-    self.draw_image.extent = c.VkExtent3D{
+    self.draw_image_extent = c.VkExtent3D{
         .width = @intCast(win_width),
         .height = @intCast(win_height),
         .depth = 1,
     };
-    self.draw_image.format = c.VK_FORMAT_R16G16B16A16_SFLOAT;
+    self.draw_image_format = c.VK_FORMAT_R16G16B16A16_SFLOAT;
     const draw_image_ci = std.mem.zeroInit(c.VkImageCreateInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = c.VK_IMAGE_TYPE_2D,
-        .format = self.draw_image.format,
-        .extent = self.draw_image.extent,
+        .format = self.draw_image_format,
+        .extent = self.draw_image_extent,
         .mipLevels = 1,
         .arrayLayers = 1,
         .samples = c.VK_SAMPLE_COUNT_1_BIT,
@@ -599,7 +667,7 @@ fn init_swapchain(self: *Self) void {
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = self.draw_image.image,
         .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
-        .format = self.draw_image.format,
+        .format = self.draw_image_format,
         .subresourceRange = .{
             .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
             .baseMipLevel = 0,
@@ -608,21 +676,21 @@ fn init_swapchain(self: *Self) void {
             .layerCount = 1,
         },
     });
-    check_vk(c.vkCreateImageView(self.device, &draw_image_view_ci, vk_alloc_cbs, &self.draw_image.view)) catch @panic("Failed to create draw image view");
-    self.imageview_deletion_queue.append(self.draw_image.view) catch @panic("Out of memory");
+    check_vk(c.vkCreateImageView(self.device, &draw_image_view_ci, vk_alloc_cbs, &self.draw_image_view)) catch @panic("Failed to create draw image view");
+    self.imageview_deletion_queue.append(self.draw_image_view) catch @panic("Out of memory");
     self.image_deletion_queue.append(self.draw_image) catch @panic("Out of memory");
 
-    self.depth_image.extent = c.VkExtent3D{
+    self.depth_image_extent = c.VkExtent3D{
         .width = self.swapchain_extent.width,
         .height = self.swapchain_extent.height,
         .depth = 1,
     };
-    self.depth_image.format = c.VK_FORMAT_D32_SFLOAT;
+    self.depth_image_format = c.VK_FORMAT_D32_SFLOAT;
     const depth_image_ci = std.mem.zeroInit(c.VkImageCreateInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = c.VK_IMAGE_TYPE_2D,
-        .format = self.depth_image.format,
-        .extent = self.depth_image.extent,
+        .format = self.depth_image_format,
+        .extent = self.depth_image_extent,
         .mipLevels = 1,
         .arrayLayers = 1,
         .samples = c.VK_SAMPLE_COUNT_1_BIT,
@@ -640,7 +708,7 @@ fn init_swapchain(self: *Self) void {
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = self.depth_image.image,
         .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
-        .format = self.depth_image.format,
+        .format = self.depth_image_format,
         .subresourceRange = .{
             .aspectMask = c.VK_IMAGE_ASPECT_DEPTH_BIT,
             .baseMipLevel = 0,
@@ -649,8 +717,8 @@ fn init_swapchain(self: *Self) void {
             .layerCount = 1,
         },
     });
-    check_vk(c.vkCreateImageView(self.device, &depth_image_view_ci, vk_alloc_cbs, &self.depth_image.view)) catch @panic("Failed to create depth image view");
-    self.imageview_deletion_queue.append(self.depth_image.view) catch @panic("Out of memory");
+    check_vk(c.vkCreateImageView(self.device, &depth_image_view_ci, vk_alloc_cbs, &self.depth_image_view)) catch @panic("Failed to create depth image view");
+    self.imageview_deletion_queue.append(self.depth_image_view) catch @panic("Out of memory");
     self.image_deletion_queue.append(self.depth_image) catch @panic("Out of memory");
     log.info("Created depth image", .{});
 }
@@ -677,21 +745,15 @@ fn init_commands(self: *Self) void {
         log.info("Created command pool and command buffer", .{});
     }
 
-    const upload_command_pool_ci = std.mem.zeroInit(c.VkCommandPoolCreateInfo, .{
-        .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = 0,
-        .queueFamilyIndex = self.graphics_queue_family,
-    });
-
-    check_vk(c.vkCreateCommandPool(self.device, &upload_command_pool_ci, vk_alloc_cbs, &self.upload_context.command_pool)) catch @panic("Failed to create upload command pool");
+    check_vk(c.vkCreateCommandPool(self.device, &command_pool_ci, vk_alloc_cbs, &self.immidiate_command_pool)) catch @panic("Failed to create upload command pool");
 
     const upload_command_buffer_ai = std.mem.zeroInit(c.VkCommandBufferAllocateInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = self.upload_context.command_pool,
+        .commandPool = self.immidiate_command_pool,
         .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
     });
-    check_vk(c.vkAllocateCommandBuffers(self.device, &upload_command_buffer_ai, &self.upload_context.command_buffer)) catch @panic("Failed to allocate upload command buffer");
+    check_vk(c.vkAllocateCommandBuffers(self.device, &upload_command_buffer_ai, &self.immidiate_command_buffer)) catch @panic("Failed to allocate upload command buffer");
 }
 
 fn init_sync_structures(self: *Self) void {
@@ -714,6 +776,6 @@ fn init_sync_structures(self: *Self) void {
         .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
     });
 
-    check_vk(c.vkCreateFence(self.device, &upload_fence_ci, vk_alloc_cbs, &self.upload_context.upload_fence)) catch @panic("Failed to create upload fence");
+    check_vk(c.vkCreateFence(self.device, &upload_fence_ci, vk_alloc_cbs, &self.immidiate_fence)) catch @panic("Failed to create upload fence");
     log.info("Created sync structures", .{});
 }

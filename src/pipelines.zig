@@ -9,6 +9,45 @@ const log = std.log.scoped(.pipelines);
 pub fn init_pipelines(self: *engine) void {
     init_background_pipelines(self);
     init_triangle_pipeline(self);
+    init_mesh_pipeline(self);
+}
+
+fn init_mesh_pipeline(self: *engine) void {
+    const vertex_code align(4) = @embedFile("triangle_mesh.vert").*;
+    const fragment_code align(4) = @embedFile("triangle.frag").*;
+    const vertex_module = vki.create_shader_module(self.device, &vertex_code, engine.vk_alloc_cbs) orelse null;
+    const fragment_module = vki.create_shader_module(self.device, &fragment_code, engine.vk_alloc_cbs) orelse null;
+    if (vertex_module != null) log.info("Created vertex shader module", .{});
+    if (fragment_module != null) log.info("Created fragment shader module", .{});
+    const buffer_range = std.mem.zeroInit(c.VkPushConstantRange, .{
+        .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT,
+        .offset = 0,
+        .size = @sizeOf(t.GPUDrawPushConstants),
+    });
+    const pipeline_layput_info = std.mem.zeroInit(c.VkPipelineLayoutCreateInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &buffer_range,
+    });
+
+    check_vk(c.vkCreatePipelineLayout(self.device, &pipeline_layput_info, null, &self.mesh_pipeline_layout)) catch @panic("Failed to create pipeline layout");
+    var pipeline_builder = PipelineBuilder.init(self.cpu_allocator);
+    defer pipeline_builder.deinit();
+    pipeline_builder.pipeline_layout = self.mesh_pipeline_layout;
+    pipeline_builder.set_shaders(vertex_module, fragment_module);
+    pipeline_builder.set_input_topology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    pipeline_builder.set_polygon_mode(c.VK_POLYGON_MODE_FILL);
+    pipeline_builder.set_cull_mode(c.VK_CULL_MODE_NONE, c.VK_FRONT_FACE_CLOCKWISE);
+    pipeline_builder.set_multisampling_none();
+    pipeline_builder.disable_blending();
+    pipeline_builder.disable_depth_test();
+    pipeline_builder.set_color_attachment_format(self.draw_image_format);
+    pipeline_builder.set_depth_format(c.VK_FORMAT_UNDEFINED);
+    self.mesh_pipeline = pipeline_builder.build_pipeline(self.device);
+    c.vkDestroyShaderModule(self.device, vertex_module, engine.vk_alloc_cbs);
+    c.vkDestroyShaderModule(self.device, fragment_module, engine.vk_alloc_cbs);
+    self.pipeline_deletion_queue.append(self.mesh_pipeline) catch @panic("Failed to append triangle pipeline to deletion queue");
+    self.pipeline_layout_deletion_queue.append(self.mesh_pipeline_layout) catch @panic("Failed to append triangle pipeline layout to deletion queue");
 }
 
 fn init_background_pipelines(self: *engine) void {
@@ -74,7 +113,7 @@ fn init_triangle_pipeline(self: *engine) void {
     pipeline_builder.set_multisampling_none();
     pipeline_builder.disable_blending();
     pipeline_builder.disable_depth_test();
-    pipeline_builder.set_color_attachment_format(self.draw_image.format);
+    pipeline_builder.set_color_attachment_format(self.draw_image_format);
     pipeline_builder.set_depth_format(c.VK_FORMAT_UNDEFINED);
     self.triangle_pipeline = pipeline_builder.build_pipeline(self.device);
     c.vkDestroyShaderModule(self.device, vertex_module, engine.vk_alloc_cbs);
@@ -96,7 +135,7 @@ const PipelineBuilder = struct {
 
     fn init(alloc: std.mem.Allocator) PipelineBuilder {
         var builder: PipelineBuilder = .{
-            .shader_stages = std.ArrayList(c.VkPipelineShaderStageCreateInfo).init(alloc),    
+            .shader_stages = std.ArrayList(c.VkPipelineShaderStageCreateInfo).init(alloc),
             .input_assembly = undefined,
             .rasterizer = undefined,
             .color_blend_attachment = undefined,
@@ -157,7 +196,7 @@ const PipelineBuilder = struct {
         var pipeline_info = std.mem.zeroInit(c.VkGraphicsPipelineCreateInfo, .{
             .sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
             .pNext = &self.render_info,
-            .stageCount = @as(u32,@intCast(self.shader_stages.items.len)),
+            .stageCount = @as(u32, @intCast(self.shader_stages.items.len)),
             .pStages = self.shader_stages.items.ptr,
             .pVertexInputState = &vertex_input_info,
             .pInputAssemblyState = &self.input_assembly,
@@ -170,11 +209,7 @@ const PipelineBuilder = struct {
         });
 
         const dynamic_state = [_]c.VkDynamicState{ c.VK_DYNAMIC_STATE_VIEWPORT, c.VK_DYNAMIC_STATE_SCISSOR };
-        const dynamic_state_info = std.mem.zeroInit(c.VkPipelineDynamicStateCreateInfo, .{
-            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-            .dynamicStateCount = dynamic_state.len,
-            .pDynamicStates = &dynamic_state[0]
-        });
+        const dynamic_state_info = std.mem.zeroInit(c.VkPipelineDynamicStateCreateInfo, .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = dynamic_state.len, .pDynamicStates = &dynamic_state[0] });
 
         pipeline_info.pDynamicState = &dynamic_state_info;
 
