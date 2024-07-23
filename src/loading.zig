@@ -2,6 +2,7 @@ const std = @import("std");
 const engine = @import("vkEngine.zig");
 const m3d = @import("math3d.zig");
 const types = @import("types.zig");
+const config = @import("config");
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.loading);
@@ -14,7 +15,6 @@ const Vec3 = m3d.Vec3;
 const Quat = m3d.Quat;
 const assert = std.debug.assert;
 const ArenaAllocator = std.heap.ArenaAllocator;
-
 const Self = @This();
 
 pub const Data = struct {
@@ -41,25 +41,112 @@ data: Data,
 
 glb_binary: ?[]align(4) const u8 = null,
 
-// pub fn load_gltf_meshes(eng: engine, path: []const u8) !ArrayList(types.MeshAsset) {
-pub fn load_gltf_meshes(path: []const u8) !void {
+pub fn load_gltf_meshes(eng: *engine, path: []const u8) !ArrayList(types.MeshAsset) {
     log.info("Loading gltf file: {s}", .{path});
     const allocator = std.heap.page_allocator;
-    const file = try std.fs.cwd().readFileAllocOptions(
-        allocator,
-        path,
-        1_512_000,
-        null,
-        4,
-        null
-    );
+    const file = try std.fs.cwd().readFileAllocOptions(allocator, path, 1_512_000, null, 4, null);
     defer allocator.free(file);
     var gltf = Self.init(allocator);
     defer deinit(&gltf);
 
     try gltf.parse(file);
-    gltf.debugPrint();
 
+    var meshes = ArrayList(types.MeshAsset).init(allocator);
+    var vertices = ArrayList(types.Vertex).init(allocator);
+    var indices = ArrayList(u32).init(allocator);
+    defer {
+        vertices.deinit();
+        indices.deinit();
+    }
+    for (gltf.data.meshes.items) |mesh| {
+        var new_mesh: types.MeshAsset = .{
+            .name = mesh.name,
+            .surfaces = ArrayList(types.GeoSurface).init(allocator),
+        };
+
+        indices.clearAndFree();
+        vertices.clearAndFree();
+        for (mesh.primitives.items) |primitive| {
+            var accessor = if (primitive.indices) |idx| blk: {
+                break :blk gltf.data.accessors.items[idx];
+            } else {
+                log.err("No indices found for mesh: {s}", .{mesh.name});
+                unreachable;
+            };
+            const new_surface: types.GeoSurface = .{
+                .start_index = @intCast(indices.items.len),
+                .count = @intCast(accessor.count),
+            };
+            log.info("Loading mesh: {s} with {d} indices.", .{mesh.name, accessor.count});
+            const initial_vtx = vertices.items.len;
+            try indices.ensureTotalCapacity(indices.items.len + @as(usize, @intCast(accessor.count)));
+            {
+                var it = accessor.iterator(u16, &gltf, gltf.glb_binary.?);
+                while (it.next()) |index| {
+                    try indices.append(index[0] + @as(u32, @intCast(initial_vtx)));
+                }
+            }
+
+            for (primitive.attributes.items) |attribute| {
+                switch (attribute) {
+                    .position => |idx| {
+                        accessor = gltf.data.accessors.items[idx];
+                        try vertices.ensureTotalCapacity(vertices.items.len + @as(usize, @intCast(accessor.count)));
+                        vertices.expandToCapacity();
+                        var it = accessor.iterator(f32, &gltf, gltf.glb_binary.?);
+                        var i: u32 = 0;
+                        while (it.next()) |v| : (i += 1) {
+                            const new_vtx = types.Vertex{
+                                .position = .{ .x = v[0], .y = v[1], .z = v[2] },
+                                .normal = .{ .x = 1, .y = 0, .z = 0 },
+                                .color = .{ .x = 1, .y = 1, .z = 1, .w = 1 },
+                                .uv_x = 0,
+                                .uv_y = 0,
+                            };
+                            vertices.items[initial_vtx + i] = new_vtx;
+                        }
+                    },
+                    .normal => |idx| {
+                        accessor = gltf.data.accessors.items[idx];
+                        var it = accessor.iterator(f32, &gltf, gltf.glb_binary.?);
+                        var i: u32 = 0;
+                        while (it.next()) |n| : (i += 1) {
+                            vertices.items[initial_vtx + i].normal = .{ .x = n[0], .y = n[1], .z = n[2] };
+                        }
+                    },
+                    .texcoord => |idx| {
+                        accessor = gltf.data.accessors.items[idx];
+                        var it = accessor.iterator(f32, &gltf, gltf.glb_binary.?);
+                        var i: u32 = 0;
+                        while (it.next()) |uv| : (i += 1) {
+                            vertices.items[initial_vtx + i].uv_x = uv[0];
+                            vertices.items[initial_vtx + i].uv_y = uv[1];
+                        }
+                    },
+                    .color => |idx| {
+                        accessor = gltf.data.accessors.items[idx];
+                        var it = accessor.iterator(f32, &gltf, gltf.glb_binary.?);
+                        var i: u32 = 0;
+                        while (it.next()) |c| : (i += 1) {
+                            vertices.items[initial_vtx + i].color = .{ .x = c[0], .y = c[1], .z = c[2], .w = c[3] };
+                        }
+                    },
+                    else => {},
+                }
+            }
+            try new_mesh.surfaces.append(new_surface);
+        }
+        if (config.override_colors) {
+            for (vertices.items) |*v| {
+                v.color = .{ .x = (v.normal.x + 1)/2, .y = (v.normal.y + 1)/2, .z = (v.normal.z + 1)/2, .w = 1.0 };
+            }
+        }
+        new_mesh.mesh_buffers = eng.upload_mesh(indices.items, vertices.items);
+        try eng.buffer_deletion_queue.append(new_mesh.mesh_buffers.index_buffer);
+        try eng.buffer_deletion_queue.append(new_mesh.mesh_buffers.vertex_buffer);
+        try meshes.append(new_mesh);
+    }
+    return meshes;
 }
 
 pub fn init(allocator: Allocator) Self {
@@ -153,7 +240,13 @@ pub fn debugPrint(self: *const Self) void {
     }
 }
 
-pub fn getDataFromBufferView( self: *const Self, comptime T: type, list: *ArrayList(T), accessor: types.Accessor, binary: []const u8,) void {
+pub fn getDataFromBufferView(
+    self: *const Self,
+    comptime T: type,
+    list: *ArrayList(T),
+    accessor: types.Accessor,
+    binary: []const u8,
+) void {
     if (switch (accessor.component_type) {
         .byte => T != i8,
         .unsigned_byte => T != u8,

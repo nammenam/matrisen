@@ -541,7 +541,7 @@ pub fn transition_image(cmd: c.VkCommandBuffer, image: c.VkImage, current_layout
     barrier.oldLayout = current_layout;
     barrier.newLayout = new_layout;
 
-    const aspect_mask: u32 = if (new_layout == c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) c.VK_IMAGE_ASPECT_DEPTH_BIT else c.VK_IMAGE_ASPECT_COLOR_BIT;
+    const aspect_mask: u32 = if (new_layout == c.VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) c.VK_IMAGE_ASPECT_DEPTH_BIT else c.VK_IMAGE_ASPECT_COLOR_BIT;
     const subresource_range = std.mem.zeroInit(c.VkImageSubresourceRange, .{
         .aspectMask = aspect_mask,
         .baseMipLevel = 0,

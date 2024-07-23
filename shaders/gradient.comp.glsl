@@ -19,14 +19,13 @@ void main()
 
 	ivec2 size = imageSize(image);
 
-    vec4 topColor = PushConstants.data1;
-    vec4 bottomColor = PushConstants.data2;
+    vec4 color = PushConstants.data1;
 
     if(texelCoord.x < size.x && texelCoord.y < size.y)
     {
         float blend = float(texelCoord.y)/(size.y); 
     
-        imageStore(image, texelCoord, mix(topColor,bottomColor, blend));
+        imageStore(image, texelCoord, color);
     }
 }
 

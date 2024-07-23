@@ -1,7 +1,6 @@
 const std = @import("std");
 const VulkanEngine = @import("vkEngine.zig");
 const lua = @import("scripting.zig");
-const load = @import("loading.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -12,7 +11,6 @@ pub fn main() !void {
     var engine = VulkanEngine.init(gpa.allocator());
     defer engine.cleanup();
 
-    try load.load_gltf_meshes("assets/suzanne.glb");
     lua.register_lua_functions(&engine); // This must be called after the engine is initialized for &engine to be correct
     engine.run();
 }

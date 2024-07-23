@@ -216,9 +216,8 @@ pub const Mat4 = extern struct {
     }
 
     ///Rotates a matrix around an arbitrary axis.
-    // OPTIMIZE: We can work out the math to create the matrix directly.
-    pub fn rotate(m: Mat4, axis: Vec3, angle_rad: f32) Mat4 {
-        return mul(rotation(axis, angle_rad), m);
+    pub fn rotate(self: Self, axis: Vec3, angle_rad: f32) Mat4 {
+        return mul(rotation(axis, angle_rad), self);
     }
 
     pub fn scale(v: Vec3) Mat4 {

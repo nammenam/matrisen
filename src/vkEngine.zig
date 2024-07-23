@@ -7,6 +7,7 @@ const s = @import("SDLutils.zig");
 const r = @import("rendertarget.zig");
 const p = @import("pipelines.zig");
 const t = @import("types.zig");
+const load = @import("loading.zig");
 const log = std.log.scoped(.vkEngine);
 pub const vk_alloc_cbs: ?*c.VkAllocationCallbacks = null;
 const check_vk = vki.check_vk;
@@ -39,10 +40,10 @@ transfer_queue: c.VkQueue = null,
 graphics_queue_family: u32 = undefined,
 present_queue_family: u32 = undefined,
 // delete queues
-buffer_deletion_queue: std.ArrayList(t.AllocatedBuffer) = undefined,
-image_deletion_queue: std.ArrayList(t.AllocatedImage) = undefined,
-imageview_deletion_queue: std.ArrayList(c.VkImageView) = undefined,
-pipeline_deletion_queue: std.ArrayList(c.VkPipeline) = undefined,
+buffer_deletion_queue: std.ArrayList(t.AllocatedBuffer),
+image_deletion_queue: std.ArrayList(t.AllocatedImage),
+imageview_deletion_queue: std.ArrayList(c.VkImageView),
+pipeline_deletion_queue: std.ArrayList(c.VkPipeline),
 pipeline_layout_deletion_queue: std.ArrayList(c.VkPipelineLayout) = undefined,
 // swapchain and sync
 swapchain: c.VkSwapchainKHR = null,
@@ -68,16 +69,30 @@ mesh_pipeline_layout: c.VkPipelineLayout = null,
 mesh_pipeline: c.VkPipeline = null,
 
 rectangle: t.GPUMeshBuffers = undefined,
+suzanne: std.ArrayList(t.MeshAsset),
 // other
 lua_state: ?*c.lua_State,
 debug_messenger: c.VkDebugUtilsMessengerEXT = null,
 pc: t.ComputePushConstants = .{
-    .data1 = m.Vec4{ .x = 1.0, .y = 0.0, .z = 0.0, .w = 0.0 },
-    .data2 = m.Vec4{ .x = 0.0, .y = 1.0, .z = 0.0, .w = 0.0 },
+    .data1 = m.Vec4{ .x = 0.8, .y = 0.8, .z = 0.8, .w = 0.0 },
+    .data2 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
     .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
     .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
 },
+white: bool = true,
 
+const background_color_light: t.ComputePushConstants = .{
+    .data1 = m.Vec4{ .x = 0.91, .y = 0.89, .z = 0.84, .w = 0.0 },
+    .data2 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+};
+const background_color_dark: t.ComputePushConstants = .{
+    .data1 = m.Vec4{ .x = 0.014, .y = 0.016, .z = 0.029, .w = 0.0 },
+    .data2 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+};
 const FRAME_OVERLAP = 2;
 
 pub fn init(a: std.mem.Allocator) Self {
@@ -91,6 +106,7 @@ pub fn init(a: std.mem.Allocator) Self {
         .imageview_deletion_queue = std.ArrayList(c.VkImageView).init(a),
         .pipeline_deletion_queue = std.ArrayList(c.VkPipeline).init(a),
         .pipeline_layout_deletion_queue = std.ArrayList(c.VkPipelineLayout).init(a),
+        .suzanne = std.ArrayList(t.MeshAsset).init(a),
         .lua_state = c.luaL_newstate(),
     };
 
@@ -132,21 +148,28 @@ pub fn run(self: *Self) void {
                     s.handle_key_down(self, event.key);
                     if (event.key.key == c.SDLK_R) {
                         // Reload and execute Lua script when 'R' is pressed
-                        const script_path = "script.lua";
-                        if (c.luaL_loadfilex(self.lua_state, script_path, null) == 0) {
-                            if (c.lua_pcallk(self.lua_state, 0, 0, 0, 0, null) != 0) {
-                                var len: usize = undefined;
-                                const error_msg = c.lua_tolstring(self.lua_state, -1, &len);
-                                if (error_msg != null) {
-                                    const error_slice = error_msg[0..len];
-                                    std.log.err("Failed to run script: {s}", .{error_slice});
-                                } else {
-                                    std.log.err("Failed to run script: Unknown error", .{});
-                                }
-                            }
-                        } else {
-                            std.log.err("Failed to load script: {s}", .{script_path});
-                        }
+                        // const script_path = "script.lua";
+                        // if (c.luaL_loadfilex(self.lua_state, script_path, null) == 0) {
+                        //     if (c.lua_pcallk(self.lua_state, 0, 0, 0, 0, null) != 0) {
+                        //         var len: usize = undefined;
+                        //         const error_msg = c.lua_tolstring(self.lua_state, -1, &len);
+                        //         if (error_msg != null) {
+                        //             const error_slice = error_msg[0..len];
+                        //             std.log.err("Failed to run script: {s}", .{error_slice});
+                        //         } else {
+                        //             std.log.err("Failed to run script: Unknown error", .{});
+                        //         }
+                        //     }
+                        // } else {
+                        //     std.log.err("Failed to load script: {s}", .{script_path});
+                        // }
+                        self.pc = if (self.white) blk:{
+                            self.white = false;
+                            break :blk background_color_dark;
+                        } else blk:{
+                            self.white = true;
+                            break :blk background_color_light;
+                        };
                     }
                 },
                 c.SDL_EVENT_KEY_UP => {
@@ -189,7 +212,7 @@ pub fn cleanup(self: *Self) void {
         c.vkDestroyCommandPool(self.device, frame.command_pool, vk_alloc_cbs);
         c.vkDestroyFence(self.device, frame.render_fence, vk_alloc_cbs);
         c.vkDestroySemaphore(self.device, frame.render_semaphore, vk_alloc_cbs);
-        c.vkDestroySemaphore(self.device, frame.present_semaphore, vk_alloc_cbs);
+        c.vkDestroySemaphore(self.device, frame.swapchain_semaphore, vk_alloc_cbs);
     }
     c.vkDestroyFence(self.device, self.immidiate_fence, vk_alloc_cbs);
     c.vkDestroyCommandPool(self.device, self.immidiate_command_pool, vk_alloc_cbs);
@@ -336,16 +359,22 @@ pub fn upload_mesh(self: *Self, indices: []u32, vertices: []t.Vertex) t.GPUMeshB
     return new_surface;
 }
 
+fn get_current_frame(self: *Self) t.FrameData {
+    return self.frames[@intCast(@mod(self.frame_number, FRAME_OVERLAP))];
+}
+
 fn draw(self: *Self) void {
     const timeout: u64 = 1_000_000_000; // 1 second in nanonesconds
     const frame = self.frames[@intCast(@mod(self.frame_number, FRAME_OVERLAP))]; // Get the current frame data
     check_vk(c.vkWaitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, timeout)) catch @panic("Failed to wait for render fence");
-    check_vk(c.vkResetFences(self.device, 1, &frame.render_fence)) catch @panic("Failed to reset render fence");
+    
     var swapchain_image_index: u32 = undefined;
-    check_vk(c.vkAcquireNextImageKHR(self.device, self.swapchain, timeout, frame.present_semaphore, null, &swapchain_image_index)) catch @panic("Failed to acquire swapchain image");
-    const cmd = frame.main_command_buffer;
-    check_vk(c.vkResetCommandBuffer(cmd, 0)) catch @panic("Failed to reset command buffer");
+    check_vk(c.vkAcquireNextImageKHR(self.device, self.swapchain, timeout, frame.swapchain_semaphore, null, &swapchain_image_index)) catch @panic("Failed to acquire swapchain image");
 
+    check_vk(c.vkResetFences(self.device, 1, &frame.render_fence)) catch @panic("Failed to reset render fence");
+    check_vk(c.vkResetCommandBuffer(frame.main_command_buffer, 0)) catch @panic("Failed to reset command buffer");
+
+    const cmd = frame.main_command_buffer;
     const cmd_begin_info = std.mem.zeroInit(c.VkCommandBufferBeginInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -359,6 +388,7 @@ fn draw(self: *Self) void {
     vki.transition_image(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_GENERAL);
     self.draw_background(cmd);
     vki.transition_image(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_GENERAL, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    vki.transition_image(cmd, self.depth_image.image, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
     self.draw_geometry(cmd);
     vki.transition_image(cmd, self.draw_image.image, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
@@ -375,7 +405,7 @@ fn draw(self: *Self) void {
 
     const wait_info = std.mem.zeroInit(c.VkSemaphoreSubmitInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .semaphore = frame.present_semaphore,
+        .semaphore = frame.swapchain_semaphore,
         .stageMask = c.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
     });
 
@@ -420,9 +450,19 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
     const color_attachment = std.mem.zeroInit(c.VkRenderingAttachmentInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .imageView = self.draw_image_view,
-        .imageLayout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .imageLayout = c.VK_IMAGE_LAYOUT_GENERAL,
         .loadOp = c.VK_ATTACHMENT_LOAD_OP_LOAD,
         .storeOp = c.VK_ATTACHMENT_STORE_OP_STORE,
+    });
+    const depth_attachment = std.mem.zeroInit(c.VkRenderingAttachmentInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView = self.depth_image_view,
+        .imageLayout = c.VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+        .loadOp = c.VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = c.VK_ATTACHMENT_STORE_OP_STORE,
+        .clearValue = .{
+            .depthStencil = .{ .depth = 0.0, .stencil = 0 },
+        },
     });
 
     const render_info = std.mem.zeroInit(c.VkRenderingInfo, .{
@@ -434,6 +474,7 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
         .layerCount = 1,
         .colorAttachmentCount = 1,
         .pColorAttachments = &color_attachment,
+        .pDepthAttachment = &depth_attachment,
     });
 
     c.vkCmdBeginRendering(cmd, &render_info);
@@ -455,16 +496,28 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
     });
 
     c.vkCmdSetScissor(cmd, 0, 1, &scissor);
-    c.vkCmdDraw(cmd, 3, 1, 0, 0);
+    // c.vkCmdDraw(cmd, 3, 1, 0, 0);
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.mesh_pipeline);
-    const push_constants = t.GPUDrawPushConstants{
-        .model = m.Mat4.IDENTITY,
+    var view = m.Mat4.rotation(.{ .x = 1.0, .y = 0.0, .z = 0.0 }, std.math.pi / 2.0);
+    view = view.rotate(.{ .x = 0.0, .y = 1.0, .z = 0.0 }, std.math.pi);
+    view = view.translate(.{ .x = 0.0, .y = 0.0, .z = -5.0 });
+    const projection = m.Mat4.perspective(70.0, @as(f32, @floatFromInt(self.draw_extent.width)) / @as(f32, @floatFromInt(self.draw_extent.height)), 1000.0, 1.0);
+    const model = m.Mat4.mul(projection, view);
+    // model.i.y *= -1.0;
+    var push_constants = t.GPUDrawPushConstants{
+        // .model = m.Mat4.IDENTITY,
+        .model = model,
         .vertex_buffer = self.rectangle.vertex_buffer_adress,
     };
 
     c.vkCmdPushConstants(cmd, self.mesh_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(t.GPUDrawPushConstants), &push_constants);
     c.vkCmdBindIndexBuffer(cmd, self.rectangle.index_buffer.buffer, 0, c.VK_INDEX_TYPE_UINT32);
-    c.vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+    // c.vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+    push_constants.vertex_buffer = self.suzanne.items[0].mesh_buffers.vertex_buffer_adress;
+    c.vkCmdPushConstants(cmd, self.mesh_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(t.GPUDrawPushConstants), &push_constants);
+    c.vkCmdBindIndexBuffer(cmd, self.suzanne.items[0].mesh_buffers.index_buffer.buffer, 0, c.VK_INDEX_TYPE_UINT32);
+    const surface = self.suzanne.items[0].surfaces.items[0];
+    c.vkCmdDrawIndexed(cmd, surface.count, 1, surface.start_index, 0, 0);
     c.vkCmdEndRendering(cmd);
 }
 
@@ -496,6 +549,7 @@ fn init_default_data(self: *Self) void {
     self.rectangle = self.upload_mesh(&rect_indices, &rect_vertices);
     self.buffer_deletion_queue.append(self.rectangle.vertex_buffer) catch @panic("Out of memory");
     self.buffer_deletion_queue.append(self.rectangle.index_buffer) catch @panic("Out of memory");
+    self.suzanne = load.load_gltf_meshes(self, "assets/suzanne.glb") catch @panic("Failed to load suzanne mesh");
     std.log.info("Initialized default data", .{});
 }
 
@@ -677,14 +731,8 @@ fn init_swapchain(self: *Self) void {
         },
     });
     check_vk(c.vkCreateImageView(self.device, &draw_image_view_ci, vk_alloc_cbs, &self.draw_image_view)) catch @panic("Failed to create draw image view");
-    self.imageview_deletion_queue.append(self.draw_image_view) catch @panic("Out of memory");
-    self.image_deletion_queue.append(self.draw_image) catch @panic("Out of memory");
 
-    self.depth_image_extent = c.VkExtent3D{
-        .width = self.swapchain_extent.width,
-        .height = self.swapchain_extent.height,
-        .depth = 1,
-    };
+    self.depth_image_extent = self.draw_image_extent;
     self.depth_image_format = c.VK_FORMAT_D32_SFLOAT;
     const depth_image_ci = std.mem.zeroInit(c.VkImageCreateInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -695,15 +743,11 @@ fn init_swapchain(self: *Self) void {
         .arrayLayers = 1,
         .samples = c.VK_SAMPLE_COUNT_1_BIT,
         .tiling = c.VK_IMAGE_TILING_OPTIMAL,
-        .usage = c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-        .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
-        .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+        .usage = c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
     });
-    const depth_image_ai = std.mem.zeroInit(c.VmaAllocationCreateInfo, .{
-        .usage = c.VMA_MEMORY_USAGE_GPU_ONLY,
-        .requiredFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-    });
-    check_vk(c.vmaCreateImage(self.gpu_allocator, &depth_image_ci, &depth_image_ai, &self.depth_image.image, &self.depth_image.allocation, null)) catch @panic("Failed to create depth image");
+
+    check_vk(c.vmaCreateImage(self.gpu_allocator, &depth_image_ci, &draw_image_ai, &self.depth_image.image, &self.depth_image.allocation, null)) catch @panic("Failed to create depth image");
+
     const depth_image_view_ci = std.mem.zeroInit(c.VkImageViewCreateInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = self.depth_image.image,
@@ -718,8 +762,12 @@ fn init_swapchain(self: *Self) void {
         },
     });
     check_vk(c.vkCreateImageView(self.device, &depth_image_view_ci, vk_alloc_cbs, &self.depth_image_view)) catch @panic("Failed to create depth image view");
+
+    self.imageview_deletion_queue.append(self.draw_image_view) catch @panic("Out of memory");
+    self.image_deletion_queue.append(self.draw_image) catch @panic("Out of memory");
     self.imageview_deletion_queue.append(self.depth_image_view) catch @panic("Out of memory");
     self.image_deletion_queue.append(self.depth_image) catch @panic("Out of memory");
+
     log.info("Created depth image", .{});
 }
 
@@ -767,7 +815,7 @@ fn init_sync_structures(self: *Self) void {
     });
 
     for (&self.frames) |*frame| {
-        check_vk(c.vkCreateSemaphore(self.device, &semaphore_ci, vk_alloc_cbs, &frame.present_semaphore)) catch @panic("Failed to create present semaphore");
+        check_vk(c.vkCreateSemaphore(self.device, &semaphore_ci, vk_alloc_cbs, &frame.swapchain_semaphore)) catch @panic("Failed to create present semaphore");
         check_vk(c.vkCreateSemaphore(self.device, &semaphore_ci, vk_alloc_cbs, &frame.render_semaphore)) catch @panic("Failed to create render semaphore");
         check_vk(c.vkCreateFence(self.device, &fence_ci, vk_alloc_cbs, &frame.render_fence)) catch @panic("Failed to create render fence");
     }

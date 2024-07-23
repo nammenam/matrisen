@@ -4,15 +4,19 @@ const builtin = @import("builtin");
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
+    const override_colors = b.option(bool, "override-colors", "Override vertex colors") orelse false;
+    
+    const options = b.addOptions();
+    options.addOption(bool, "override_colors", override_colors);
 
     const exe = b.addExecutable(.{
         .name = "matrisen",
-        .root_source_file = b.path( "src/main.zig"),
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    b.installArtifact(exe);
 
+    exe.root_module.addOptions("config", options);
     exe.linkLibCpp();
     exe.linkLibC();
 
@@ -24,8 +28,12 @@ pub fn build(b: *std.Build) void {
     exe.addCSourceFile(.{ .file = b.path("src/stb_image.c"), .flags = &.{""} });
     compile_all_shaders(b, exe);
 
-    const run_cmd = b.addRunArtifact(exe);
+    // artifacts
+    // default
+    b.installArtifact(exe);
 
+    // run
+    const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 
     if (b.args) |args| {
@@ -35,6 +43,7 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    // test
     const unit_tests = b.addTest(.{
         .root_source_file = b.path("src/main.zig"),
         .target = b.host,

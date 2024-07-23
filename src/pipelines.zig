@@ -40,9 +40,11 @@ fn init_mesh_pipeline(self: *engine) void {
     pipeline_builder.set_cull_mode(c.VK_CULL_MODE_NONE, c.VK_FRONT_FACE_CLOCKWISE);
     pipeline_builder.set_multisampling_none();
     pipeline_builder.disable_blending();
-    pipeline_builder.disable_depth_test();
+    // pipeline_builder.disable_depth_test();
+    pipeline_builder.enable_depth_test(true, c.VK_COMPARE_OP_GREATER_OR_EQUAL);
     pipeline_builder.set_color_attachment_format(self.draw_image_format);
-    pipeline_builder.set_depth_format(c.VK_FORMAT_UNDEFINED);
+    pipeline_builder.set_depth_format(self.depth_image_format);
+    // pipeline_builder.set_depth_format(c.VK_FORMAT_UNDEFINED);
     self.mesh_pipeline = pipeline_builder.build_pipeline(self.device);
     c.vkDestroyShaderModule(self.device, vertex_module, engine.vk_alloc_cbs);
     c.vkDestroyShaderModule(self.device, fragment_module, engine.vk_alloc_cbs);
@@ -114,6 +116,7 @@ fn init_triangle_pipeline(self: *engine) void {
     pipeline_builder.disable_blending();
     pipeline_builder.disable_depth_test();
     pipeline_builder.set_color_attachment_format(self.draw_image_format);
+    pipeline_builder.set_depth_format(self.depth_image_format);
     pipeline_builder.set_depth_format(c.VK_FORMAT_UNDEFINED);
     self.triangle_pipeline = pipeline_builder.build_pipeline(self.device);
     c.vkDestroyShaderModule(self.device, vertex_module, engine.vk_alloc_cbs);
@@ -281,6 +284,18 @@ const PipelineBuilder = struct {
         self.depth_stencil.depthTestEnable = c.VK_FALSE;
         self.depth_stencil.depthWriteEnable = c.VK_FALSE;
         self.depth_stencil.depthCompareOp = c.VK_COMPARE_OP_NEVER;
+        self.depth_stencil.depthBoundsTestEnable = c.VK_FALSE;
+        self.depth_stencil.stencilTestEnable = c.VK_FALSE;
+        self.depth_stencil.minDepthBounds = 0.0;
+        self.depth_stencil.maxDepthBounds = 1.0;
+        self.depth_stencil.front = std.mem.zeroInit(c.VkStencilOpState, .{});
+        self.depth_stencil.back = std.mem.zeroInit(c.VkStencilOpState, .{});
+    }
+
+    fn enable_depth_test(self: *PipelineBuilder, depthwrite_enable : bool, op : c.VkCompareOp) void {
+        self.depth_stencil.depthTestEnable = c.VK_TRUE;
+        self.depth_stencil.depthWriteEnable = if (depthwrite_enable) c.VK_TRUE else c.VK_FALSE;
+        self.depth_stencil.depthCompareOp = op;
         self.depth_stencil.depthBoundsTestEnable = c.VK_FALSE;
         self.depth_stencil.stencilTestEnable = c.VK_FALSE;
         self.depth_stencil.minDepthBounds = 0.0;

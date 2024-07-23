@@ -34,7 +34,7 @@ pub const AllocatedImage = struct {
 };
 
 pub const FrameData = struct {
-    present_semaphore: c.VkSemaphore = null,
+    swapchain_semaphore: c.VkSemaphore = null,
     render_semaphore: c.VkSemaphore = null,
     render_fence: c.VkFence = null,
     command_pool: c.VkCommandPool = null,
@@ -56,7 +56,7 @@ pub const GeoSurface = struct {
 pub const MeshAsset = struct {
     name: []const u8,
     surfaces: std.ArrayList(GeoSurface),
-    mesh_buffers: GPUMeshBuffers,
+    mesh_buffers: GPUMeshBuffers = undefined,
 };
 
 pub const Index = usize;
