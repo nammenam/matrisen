@@ -1,14 +1,17 @@
 const std = @import("std");
-const m = @import("math3d.zig");
+const m = @import("3Dmath.zig");
 const c = @import("clibs.zig");
-const Gltf = @import("loading.zig");
+const Gltf = @import("assetloader.zig");
 
-pub const Vertex = extern struct {
-    position: m.Vec3,
-    uv_x: f32 = 0.0,
-    normal: m.Vec3 = .{ .x = 0.0, .y = 0.0, .z = 0.0 },
-    uv_y: f32 = 0.0,
-    color: m.Vec4,
+pub const AllocatedBuffer = struct {
+    buffer: c.VkBuffer,
+    allocation: c.VmaAllocation,
+    info: c.VmaAllocationInfo,
+};
+
+pub const AllocatedImage = struct {
+    image: c.VkImage,
+    allocation: c.VmaAllocation,
 };
 
 pub const GPUMeshBuffers = struct {
@@ -22,15 +25,12 @@ pub const GPUDrawPushConstants = extern struct {
     vertex_buffer: c.VkDeviceAddress,
 };
 
-pub const AllocatedBuffer = struct {
-    buffer: c.VkBuffer,
-    allocation: c.VmaAllocation,
-    info: c.VmaAllocationInfo,
-};
-
-pub const AllocatedImage = struct {
-    image: c.VkImage,
-    allocation: c.VmaAllocation,
+pub const Vertex = extern struct {
+    position: m.Vec3,
+    uv_x: f32 = 0.0,
+    normal: m.Vec3 = .{ .x = 0.0, .y = 0.0, .z = 0.0 },
+    uv_y: f32 = 0.0,
+    color: m.Vec4,
 };
 
 pub const FrameData = struct {

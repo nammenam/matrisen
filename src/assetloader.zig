@@ -1,21 +1,19 @@
 const std = @import("std");
-const engine = @import("vkEngine.zig");
-const m3d = @import("math3d.zig");
+const engine = @import("engine.zig");
 const types = @import("types.zig");
 const config = @import("config");
+const Mat4 = @import("3Dmath.zig").Mat4;
+const Vec3 = @import("3Dmath.zig").Vec3;
+const Quat = @import("3Dmath.zig").Quat;
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
-const log = std.log.scoped(.loading);
+const log = std.log.scoped(.assetloader);
 const mem = std.mem;
 const math = std.math;
 const json = std.json;
 const fmt = std.fmt;
-const Mat4 = m3d.Mat4;
-const Vec3 = m3d.Vec3;
-const Quat = m3d.Quat;
 const assert = std.debug.assert;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const Self = @This();
 
 pub const Data = struct {
     asset: types.Asset,
@@ -36,9 +34,11 @@ pub const Data = struct {
     lights: ArrayList(types.Light),
 };
 
+
+
+const Self = @This();
 arena: *ArenaAllocator,
 data: Data,
-
 glb_binary: ?[]align(4) const u8 = null,
 
 pub fn load_gltf_meshes(eng: *engine, path: []const u8) !ArrayList(types.MeshAsset) {

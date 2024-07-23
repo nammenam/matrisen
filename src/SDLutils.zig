@@ -1,8 +1,5 @@
-const e = @import("vkEngine.zig");
+const e = @import("engine.zig");
 const c = @import("clibs.zig");
-
-
-
 
 pub fn handle_key_up(engine:*e, key_event: c.SDL_KeyboardEvent) void {
     switch (key_event.key) {

@@ -1,5 +1,5 @@
 const c = @import("clibs.zig");
-const engine = @import("vkEngine.zig");
+const engine = @import("engine.zig");
 const std = @import("std");
 
 pub const WindowManager = struct {

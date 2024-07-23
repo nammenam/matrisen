@@ -1,19 +1,32 @@
 const std = @import("std");
-const vki = @import("vkUtils.zig");
-const d = @import("vkDescriptors.zig");
+const vki = @import("vulkanutils.zig");
+const d = @import("descriptors.zig");
 const c = @import("clibs.zig");
-const m = @import("math3d.zig");
+const m = @import("3Dmath.zig");
 const s = @import("SDLutils.zig");
 const r = @import("rendertarget.zig");
-const p = @import("pipelines.zig");
+const PipelineBuilder = @import("pipelinebuilder.zig");
 const t = @import("types.zig");
-const load = @import("loading.zig");
+const load = @import("assetloader.zig");
+
 const log = std.log.scoped(.vkEngine);
 pub const vk_alloc_cbs: ?*c.VkAllocationCallbacks = null;
 const check_vk = vki.check_vk;
+const background_color_light: t.ComputePushConstants = .{
+    .data1 = m.Vec4{ .x = 0.91, .y = 0.89, .z = 0.84, .w = 0.0 },
+    .data2 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+};
+const background_color_dark: t.ComputePushConstants = .{
+    .data1 = m.Vec4{ .x = 0.014, .y = 0.016, .z = 0.029, .w = 0.0 },
+    .data2 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+};
+const FRAME_OVERLAP = 2;
 
 const Self = @This();
-// targets
 window: r.WindowManager = undefined,
 depth_image: t.AllocatedImage = undefined,
 depth_image_view: c.VkImageView = undefined,
@@ -81,20 +94,6 @@ pc: t.ComputePushConstants = .{
 },
 white: bool = true,
 
-const background_color_light: t.ComputePushConstants = .{
-    .data1 = m.Vec4{ .x = 0.91, .y = 0.89, .z = 0.84, .w = 0.0 },
-    .data2 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
-    .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
-    .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
-};
-const background_color_dark: t.ComputePushConstants = .{
-    .data1 = m.Vec4{ .x = 0.014, .y = 0.016, .z = 0.029, .w = 0.0 },
-    .data2 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
-    .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
-    .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
-};
-const FRAME_OVERLAP = 2;
-
 pub fn init(a: std.mem.Allocator) Self {
     const win = try r.WindowManager.init(.{ .width = 1600, .height = 900 });
 
@@ -127,7 +126,7 @@ pub fn init(a: std.mem.Allocator) Self {
     engine.init_sync_structures();
     engine.init_descriptors();
     engine.init_default_data();
-    p.init_pipelines(&engine);
+    engine.init_pipelines();
     c.luaL_openlibs(engine.lua_state);
     return engine;
 }
@@ -163,10 +162,10 @@ pub fn run(self: *Self) void {
                         // } else {
                         //     std.log.err("Failed to load script: {s}", .{script_path});
                         // }
-                        self.pc = if (self.white) blk:{
+                        self.pc = if (self.white) blk: {
                             self.white = false;
                             break :blk background_color_dark;
-                        } else blk:{
+                        } else blk: {
                             self.white = true;
                             break :blk background_color_light;
                         };
@@ -364,10 +363,10 @@ fn get_current_frame(self: *Self) t.FrameData {
 }
 
 fn draw(self: *Self) void {
-    const timeout: u64 = 1_000_000_000; // 1 second in nanonesconds
+    const timeout: u64 = 4_000_000_000; // 4 second in nanonesconds
     const frame = self.frames[@intCast(@mod(self.frame_number, FRAME_OVERLAP))]; // Get the current frame data
     check_vk(c.vkWaitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, timeout)) catch @panic("Failed to wait for render fence");
-    
+
     var swapchain_image_index: u32 = undefined;
     check_vk(c.vkAcquireNextImageKHR(self.device, self.swapchain, timeout, frame.swapchain_semaphore, null, &swapchain_image_index)) catch @panic("Failed to acquire swapchain image");
 
@@ -478,7 +477,6 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
     });
 
     c.vkCmdBeginRendering(cmd, &render_info);
-    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.triangle_pipeline);
     const viewport = std.mem.zeroInit(c.VkViewport, .{
         .x = 0.0,
         .y = 0.0,
@@ -496,7 +494,6 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
     });
 
     c.vkCmdSetScissor(cmd, 0, 1, &scissor);
-    // c.vkCmdDraw(cmd, 3, 1, 0, 0);
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.mesh_pipeline);
     var view = m.Mat4.rotation(.{ .x = 1.0, .y = 0.0, .z = 0.0 }, std.math.pi / 2.0);
     view = view.rotate(.{ .x = 0.0, .y = 1.0, .z = 0.0 }, std.math.pi);
@@ -505,15 +502,10 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
     const model = m.Mat4.mul(projection, view);
     // model.i.y *= -1.0;
     var push_constants = t.GPUDrawPushConstants{
-        // .model = m.Mat4.IDENTITY,
         .model = model,
-        .vertex_buffer = self.rectangle.vertex_buffer_adress,
+        .vertex_buffer = self.suzanne.items[0].mesh_buffers.vertex_buffer_adress,
     };
 
-    c.vkCmdPushConstants(cmd, self.mesh_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(t.GPUDrawPushConstants), &push_constants);
-    c.vkCmdBindIndexBuffer(cmd, self.rectangle.index_buffer.buffer, 0, c.VK_INDEX_TYPE_UINT32);
-    // c.vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
-    push_constants.vertex_buffer = self.suzanne.items[0].mesh_buffers.vertex_buffer_adress;
     c.vkCmdPushConstants(cmd, self.mesh_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(t.GPUDrawPushConstants), &push_constants);
     c.vkCmdBindIndexBuffer(cmd, self.suzanne.items[0].mesh_buffers.index_buffer.buffer, 0, c.VK_INDEX_TYPE_UINT32);
     const surface = self.suzanne.items[0].surfaces.items[0];
@@ -826,4 +818,90 @@ fn init_sync_structures(self: *Self) void {
 
     check_vk(c.vkCreateFence(self.device, &upload_fence_ci, vk_alloc_cbs, &self.immidiate_fence)) catch @panic("Failed to create upload fence");
     log.info("Created sync structures", .{});
+}
+
+fn init_pipelines(self: *Self) void {
+    init_background_pipelines(self);
+    init_mesh_pipeline(self);
+}
+
+fn init_mesh_pipeline(self: *Self) void {
+    const vertex_code align(4) = @embedFile("triangle_mesh.vert").*;
+    const fragment_code align(4) = @embedFile("triangle.frag").*;
+    const vertex_module = vki.create_shader_module(self.device, &vertex_code, vk_alloc_cbs) orelse null;
+    const fragment_module = vki.create_shader_module(self.device, &fragment_code, vk_alloc_cbs) orelse null;
+    if (vertex_module != null) log.info("Created vertex shader module", .{});
+    if (fragment_module != null) log.info("Created fragment shader module", .{});
+    const buffer_range = std.mem.zeroInit(c.VkPushConstantRange, .{
+        .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT,
+        .offset = 0,
+        .size = @sizeOf(t.GPUDrawPushConstants),
+    });
+    const pipeline_layput_info = std.mem.zeroInit(c.VkPipelineLayoutCreateInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &buffer_range,
+    });
+
+    check_vk(c.vkCreatePipelineLayout(self.device, &pipeline_layput_info, null, &self.mesh_pipeline_layout)) catch @panic("Failed to create pipeline layout");
+    var pipeline_builder = PipelineBuilder.init(self.cpu_allocator);
+    defer pipeline_builder.deinit();
+    pipeline_builder.pipeline_layout = self.mesh_pipeline_layout;
+    pipeline_builder.set_shaders(vertex_module, fragment_module);
+    pipeline_builder.set_input_topology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    pipeline_builder.set_polygon_mode(c.VK_POLYGON_MODE_FILL);
+    pipeline_builder.set_cull_mode(c.VK_CULL_MODE_NONE, c.VK_FRONT_FACE_CLOCKWISE);
+    pipeline_builder.set_multisampling_none();
+    pipeline_builder.disable_blending();
+    // pipeline_builder.disable_depth_test();
+    pipeline_builder.enable_depth_test(true, c.VK_COMPARE_OP_GREATER_OR_EQUAL);
+    pipeline_builder.set_color_attachment_format(self.draw_image_format);
+    pipeline_builder.set_depth_format(self.depth_image_format);
+    // pipeline_builder.set_depth_format(c.VK_FORMAT_UNDEFINED);
+    self.mesh_pipeline = pipeline_builder.build_pipeline(self.device);
+    c.vkDestroyShaderModule(self.device, vertex_module, vk_alloc_cbs);
+    c.vkDestroyShaderModule(self.device, fragment_module, vk_alloc_cbs);
+    self.pipeline_deletion_queue.append(self.mesh_pipeline) catch @panic("Failed to append triangle pipeline to deletion queue");
+    self.pipeline_layout_deletion_queue.append(self.mesh_pipeline_layout) catch @panic("Failed to append triangle pipeline layout to deletion queue");
+}
+
+fn init_background_pipelines(self: *Self) void {
+    var compute_layout = std.mem.zeroInit(c.VkPipelineLayoutCreateInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &self.draw_image_descriptor_layout,
+    });
+
+    const push_constant_range = std.mem.zeroInit(c.VkPushConstantRange, .{
+        .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT,
+        .offset = 0,
+        .size = @sizeOf(t.ComputePushConstants),
+    });
+
+    compute_layout.pPushConstantRanges = &push_constant_range;
+    compute_layout.pushConstantRangeCount = 1;
+
+    check_vk(c.vkCreatePipelineLayout(self.device, &compute_layout, null, &self.gradient_pipeline_layout)) catch @panic("Failed to create pipeline layout");
+
+    const comp_code align(4) = @embedFile("gradient.comp").*;
+    const comp_module = vki.create_shader_module(self.device, &comp_code, vk_alloc_cbs) orelse null;
+    if (comp_module != null) log.info("Created compute shader module", .{});
+
+    const stage_ci = std.mem.zeroInit(c.VkPipelineShaderStageCreateInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = c.VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = comp_module,
+        .pName = "main",
+    });
+
+    const compute_ci = std.mem.zeroInit(c.VkComputePipelineCreateInfo, .{
+        .sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .layout = self.gradient_pipeline_layout,
+        .stage = stage_ci,
+    });
+
+    check_vk(c.vkCreateComputePipelines(self.device, null, 1, &compute_ci, null, &self.gradient_pipeline)) catch @panic("Failed to create compute pipeline");
+    c.vkDestroyShaderModule(self.device, comp_module, vk_alloc_cbs);
+    self.pipeline_deletion_queue.append(self.gradient_pipeline) catch @panic("Failed to append gradient pipeline to deletion queue");
+    self.pipeline_layout_deletion_queue.append(self.gradient_pipeline_layout) catch @panic("Failed to append gradient pipeline layout to deletion queue");
 }

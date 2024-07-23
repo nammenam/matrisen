@@ -1,6 +1,6 @@
-const engine = @import("vkEngine.zig");
+const engine = @import("engine.zig");
 const c = @import("clibs.zig");
-const m = @import("math3d.zig");
+const Vec4 = @import("3Dmath.zig").Vec4;
 
 pub fn set_push_constant(l: ?*c.lua_State) callconv(.C) c_int {
     const self = @as(*engine, @alignCast(@ptrCast(c.lua_touserdata(l.?, c.lua_upvalueindex(1)))));
@@ -9,7 +9,7 @@ pub fn set_push_constant(l: ?*c.lua_State) callconv(.C) c_int {
     const y = @as(f32, @floatCast(c.luaL_checknumber(l.?, 3)));
     const z = @as(f32, @floatCast(c.luaL_checknumber(l.?, 4)));
     const w = @as(f32, @floatCast(c.luaL_checknumber(l.?, 5)));
-    const new_vec = m.Vec4{ .x = x, .y = y, .z = z, .w = w };
+    const new_vec = Vec4{ .x = x, .y = y, .z = z, .w = w };
 
     switch (index) {
         1 => self.*.pc.data1 = new_vec,

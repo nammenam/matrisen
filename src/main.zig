@@ -1,5 +1,5 @@
 const std = @import("std");
-const VulkanEngine = @import("vkEngine.zig");
+const Engine = @import("engine.zig");
 const lua = @import("scripting.zig");
 
 pub fn main() !void {
@@ -8,7 +8,7 @@ pub fn main() !void {
         @panic("Leaked memory");
     };
 
-    var engine = VulkanEngine.init(gpa.allocator());
+    var engine = Engine.init(gpa.allocator());
     defer engine.cleanup();
 
     lua.register_lua_functions(&engine); // This must be called after the engine is initialized for &engine to be correct

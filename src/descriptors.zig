@@ -1,6 +1,6 @@
 const std = @import("std");
 const c = @import("clibs.zig");
-const vki = @import("vkUtils.zig");
+const vki = @import("vulkanutils.zig");
 
 pub const DescriptorLayoutBuilder = struct {
     bindings: std.ArrayList(c.VkDescriptorSetLayoutBinding),
