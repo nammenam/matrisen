@@ -180,3 +180,25 @@ pub fn enable_depth_test(self: *Self, depthwrite_enable : bool, op : c.VkCompare
     self.depth_stencil.front = std.mem.zeroInit(c.VkStencilOpState, .{});
     self.depth_stencil.back = std.mem.zeroInit(c.VkStencilOpState, .{});
 }
+
+pub fn enable_blending_additive(self: *Self) void {
+    self.color_blend_attachment.blendEnable = c.VK_TRUE;
+    self.color_blend_attachment.srcColorBlendFactor = c.VK_BLEND_FACTOR_SRC_ALPHA;
+    self.color_blend_attachment.dstColorBlendFactor = c.VK_BLEND_FACTOR_ONE;
+    self.color_blend_attachment.colorBlendOp = c.VK_BLEND_OP_ADD;
+    self.color_blend_attachment.srcAlphaBlendFactor = c.VK_BLEND_FACTOR_ONE;
+    self.color_blend_attachment.dstAlphaBlendFactor = c.VK_BLEND_FACTOR_ZERO;
+    self.color_blend_attachment.alphaBlendOp = c.VK_BLEND_OP_ADD;
+    self.color_blend_attachment.colorWriteMask = c.VK_COLOR_COMPONENT_R_BIT | c.VK_COLOR_COMPONENT_G_BIT | c.VK_COLOR_COMPONENT_B_BIT | c.VK_COLOR_COMPONENT_A_BIT;
+}
+
+pub fn enable_blending_alpha(self: *Self) void {
+    self.color_blend_attachment.blendEnable = c.VK_TRUE;
+    self.color_blend_attachment.srcColorBlendFactor = c.VK_BLEND_FACTOR_SRC_ALPHA;
+    self.color_blend_attachment.dstColorBlendFactor = c.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    self.color_blend_attachment.colorBlendOp = c.VK_BLEND_OP_ADD;
+    self.color_blend_attachment.srcAlphaBlendFactor = c.VK_BLEND_FACTOR_ONE;
+    self.color_blend_attachment.dstAlphaBlendFactor = c.VK_BLEND_FACTOR_ZERO;
+    self.color_blend_attachment.alphaBlendOp = c.VK_BLEND_OP_ADD;
+    self.color_blend_attachment.colorWriteMask = c.VK_COLOR_COMPONENT_R_BIT | c.VK_COLOR_COMPONENT_G_BIT | c.VK_COLOR_COMPONENT_B_BIT | c.VK_COLOR_COMPONENT_A_BIT;
+}

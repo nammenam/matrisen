@@ -1,5 +1,6 @@
 const std = @import("std");
 const m = @import("3Dmath.zig");
+const DescriptorAllocatorGrowable = @import("descriptors.zig").DescriptorAllocatorGrowable;
 const c = @import("clibs.zig");
 const Gltf = @import("assetloader.zig");
 
@@ -25,6 +26,15 @@ pub const GPUDrawPushConstants = extern struct {
     vertex_buffer: c.VkDeviceAddress,
 };
 
+pub const GPUSceneData = extern struct {
+    view: m.Mat4,
+    proj: m.Mat4,
+    viewproj: m.Mat4,
+    ambient_color: m.Vec4,
+    sunlight_dir: m.Vec4,
+    sunlight_color: m.Vec4,
+};
+
 pub const Vertex = extern struct {
     position: m.Vec3,
     uv_x: f32 = 0.0,
@@ -39,6 +49,7 @@ pub const FrameData = struct {
     render_fence: c.VkFence = null,
     command_pool: c.VkCommandPool = null,
     main_command_buffer: c.VkCommandBuffer = null,
+    frame_descriptors: DescriptorAllocatorGrowable = undefined,
 };
 
 pub const ComputePushConstants = extern struct {

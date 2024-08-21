@@ -114,14 +114,10 @@ pub const Instance = struct {
 pub const PhysicalDeviceSelectionCriteria = enum {
     First,
     PreferDiscrete,
+    PreferIntegrated,
 };
 
-pub const PhysicalDeviceSelectOpts = struct {
-    min_api_version: u32 = c.VK_MAKE_VERSION(1, 0, 0),
-    required_extensions: []const [*c]const u8 = &.{},
-    surface: c.VkSurfaceKHR,
-    criteria: PhysicalDeviceSelectionCriteria = .PreferDiscrete,
-};
+pub const PhysicalDeviceSelectOpts = struct { min_api_version: u32 = c.VK_MAKE_VERSION(1, 3, 0), required_extensions: []const [*c]const u8 = &.{}, surface: ?c.VkSurfaceKHR, criteria: PhysicalDeviceSelectionCriteria = .PreferDiscrete };
 
 pub const PhysicalDevice = struct {
     handle: c.VkPhysicalDevice = null,
@@ -149,17 +145,27 @@ pub const PhysicalDevice = struct {
         for (physical_devices) |device| {
             const pd = make_physical_device(a, device, opts.surface) catch continue;
             _ = is_physical_device_suitable(a, pd, opts) catch continue;
-
-            if (opts.criteria == PhysicalDeviceSelectionCriteria.First) {
-                suitable_pd = pd;
-                break;
-            }
-
-            if (pd.properties.deviceType == c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-                suitable_pd = pd;
-                break;
-            } else if (suitable_pd == null) {
-                suitable_pd = pd;
+            switch (opts.criteria) {
+                PhysicalDeviceSelectionCriteria.First => {
+                    suitable_pd = pd;
+                    break;
+                },
+                PhysicalDeviceSelectionCriteria.PreferDiscrete => {
+                    if (pd.properties.deviceType == c.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+                        suitable_pd = pd;
+                        break;
+                    } else if (suitable_pd == null) {
+                        suitable_pd = pd;
+                    }
+                },
+                PhysicalDeviceSelectionCriteria.PreferIntegrated => {
+                    if (pd.properties.deviceType == c.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
+                        suitable_pd = pd;
+                        break;
+                    } else if (suitable_pd == null) {
+                        suitable_pd = pd;
+                    }
+                },
             }
         }
 
@@ -175,7 +181,7 @@ pub const PhysicalDevice = struct {
         return res;
     }
 
-    fn make_physical_device(a: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) !PhysicalDevice {
+    fn make_physical_device(a: std.mem.Allocator, device: c.VkPhysicalDevice, surface: ?c.VkSurfaceKHR) !PhysicalDevice {
         var props = std.mem.zeroInit(c.VkPhysicalDeviceProperties, .{});
         c.vkGetPhysicalDeviceProperties(device, &props);
 
@@ -199,11 +205,13 @@ pub const PhysicalDevice = struct {
                 graphics_queue_family = index;
             }
 
-            if (present_queue_family == PhysicalDevice.INVALID_QUEUE_FAMILY_INDEX) {
-                var present_support: c.VkBool32 = undefined;
-                try check_vk(c.vkGetPhysicalDeviceSurfaceSupportKHR(device, index, surface, &present_support));
-                if (present_support == c.VK_TRUE) {
-                    present_queue_family = index;
+            if (surface) |surf| {
+                if (present_queue_family == PhysicalDevice.INVALID_QUEUE_FAMILY_INDEX) {
+                    var present_support: c.VkBool32 = undefined;
+                    try check_vk(c.vkGetPhysicalDeviceSurfaceSupportKHR(device, index, surf, &present_support));
+                    if (present_support == c.VK_TRUE) {
+                        present_queue_family = index;
+                    }
                 }
             }
 
@@ -255,10 +263,12 @@ pub const PhysicalDevice = struct {
         defer arena_state.deinit();
         const arena = arena_state.allocator();
 
-        const swapchain_support = try SwapchainSupportInfo.init(arena, device.handle, opts.surface);
-        defer swapchain_support.deinit(arena);
-        if (swapchain_support.formats.len == 0 or swapchain_support.present_modes.len == 0) {
-            return false;
+        if (opts.surface) |surf| {
+            const swapchain_support = try SwapchainSupportInfo.init(arena, device.handle, surf);
+            defer swapchain_support.deinit(arena);
+            if (swapchain_support.formats.len == 0 or swapchain_support.present_modes.len == 0) {
+                return false;
+            }
         }
 
         if (opts.required_extensions.len > 0) {
@@ -391,6 +401,7 @@ pub const SwapchainCreateOpts = struct {
     device: c.VkDevice,
     surface: c.VkSurfaceKHR,
     old_swapchain: c.VkSwapchainKHR = null,
+    format: c.VkSurfaceFormatKHR = undefined,
     vsync: bool = false,
     triple_buffer: bool = false,
     window_width: u32 = 0,
@@ -411,7 +422,7 @@ pub const Swapchain = struct {
 
         const format = pick_format(support_info.formats, opts);
         const present_mode = pick_present_mode(support_info.present_modes, opts);
-        log.info("Selected swapchain format: {d}, present mode: {d}", .{ format, present_mode });
+        // log.info("Selected swapchain format: {d}, present mode: {d}", .{ format, present_mode });
         const extent = make_extent(support_info.capabilities, opts);
 
         const image_count = blk: {
@@ -453,7 +464,6 @@ pub const Swapchain = struct {
         var swapchain: c.VkSwapchainKHR = undefined;
         try check_vk(c.vkCreateSwapchainKHR(opts.device, &swapchain_info, opts.alloc_cb, &swapchain));
         errdefer c.vkDestroySwapchainKHR(opts.device, swapchain, opts.alloc_cb);
-        log.info("Created vulkan swapchain.", .{});
 
         // Try and fetch the images from the swpachain.
         var swapchain_image_count: u32 = undefined;
@@ -480,38 +490,31 @@ pub const Swapchain = struct {
     }
 
     fn pick_format(formats: []const c.VkSurfaceFormatKHR, opts: SwapchainCreateOpts) c.VkFormat {
-        // TODO: Add support for specifying desired format.
-        _ = opts;
+        const desired_format = opts.format;
         for (formats) |format| {
-            if (format.format == c.VK_FORMAT_B8G8R8A8_SRGB and
-                format.colorSpace == c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            if (format.format == desired_format.format and
+                format.colorSpace == desired_format.colorSpace)
             {
                 return format.format;
             }
         }
-
         return formats[0].format;
     }
 
     fn pick_present_mode(modes: []const c.VkPresentModeKHR, opts: SwapchainCreateOpts) c.VkPresentModeKHR {
-        if (opts.vsync == false) {
-            // Prefer immediate mode if present.
+        if (opts.vsync == true) {
             for (modes) |mode| {
-                if (mode == c.VK_PRESENT_MODE_IMMEDIATE_KHR) {
+                if (mode == c.VK_PRESENT_MODE_FIFO_RELAXED_KHR) {
                     return mode;
                 }
             }
-            log.info("Immediate present mode is not possible. Falling back to vsync", .{});
-        }
-
-        // Prefer triple buffering if possible.
-        for (modes) |mode| {
-            if (mode == c.VK_PRESENT_MODE_MAILBOX_KHR and opts.triple_buffer) {
-                return mode;
+        } else {
+            for (modes) |mode| {
+                if (mode == c.VK_PRESENT_MODE_MAILBOX_KHR) {
+                    return mode;
+                }
             }
         }
-
-        // If nothing else is present, FIFO is guaranteed to be available by the specs.
         return c.VK_PRESENT_MODE_FIFO_KHR;
     }
 
@@ -586,7 +589,7 @@ pub fn copy_image_to_image(cmd: c.VkCommandBuffer, src: c.VkImage, dst: c.VkImag
     blit_info.dstImageLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     blit_info.regionCount = 1;
     blit_info.pRegions = &blit_region;
-    blit_info.filter = c.VK_FILTER_LINEAR;
+    blit_info.filter = c.VK_FILTER_NEAREST;
 
     c.vkCmdBlitImage2(cmd, &blit_info);
 }

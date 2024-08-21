@@ -8,26 +8,28 @@ const r = @import("rendertarget.zig");
 const PipelineBuilder = @import("pipelinebuilder.zig");
 const t = @import("types.zig");
 const load = @import("assetloader.zig");
-
 const log = std.log.scoped(.vkEngine);
 pub const vk_alloc_cbs: ?*c.VkAllocationCallbacks = null;
 const check_vk = vki.check_vk;
 const background_color_light: t.ComputePushConstants = .{
-    .data1 = m.Vec4{ .x = 0.91, .y = 0.89, .z = 0.84, .w = 0.0 },
-    .data2 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data1 = m.Vec4{ .x = 0.5, .y = 0.5, .z = 0.5, .w = 0.0 },
+    .data2 = m.Vec4{ .x = 0.8, .y = 0.8, .z = 0.8, .w = 0.0 },
     .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
     .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
 };
 const background_color_dark: t.ComputePushConstants = .{
-    .data1 = m.Vec4{ .x = 0.014, .y = 0.016, .z = 0.029, .w = 0.0 },
-    .data2 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
+    .data1 = m.Vec4{ .x = 0.05, .y = 0.05, .z = 0.05, .w = 0.0 },
+    .data2 = m.Vec4{ .x = 0.08, .y = 0.08, .z = 0.08, .w = 0.0 },
     .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
     .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
 };
 const FRAME_OVERLAP = 2;
+const render_scale = 0.1;
 
 const Self = @This();
+resize_request: bool = false,
 window: r.WindowManager = undefined,
+window_extent: c.VkExtent2D = undefined,
 depth_image: t.AllocatedImage = undefined,
 depth_image_view: c.VkImageView = undefined,
 depth_image_format: c.VkFormat = undefined,
@@ -86,19 +88,16 @@ suzanne: std.ArrayList(t.MeshAsset),
 // other
 lua_state: ?*c.lua_State,
 debug_messenger: c.VkDebugUtilsMessengerEXT = null,
-pc: t.ComputePushConstants = .{
-    .data1 = m.Vec4{ .x = 0.8, .y = 0.8, .z = 0.8, .w = 0.0 },
-    .data2 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
-    .data3 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
-    .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
-},
+pc: t.ComputePushConstants = background_color_light,
 white: bool = true,
 
 pub fn init(a: std.mem.Allocator) Self {
-    const win = try r.WindowManager.init(.{ .width = 1600, .height = 900 });
+    const window_extent = c.VkExtent2D{ .width = 1600, .height = 900 };
+    const win = try r.WindowManager.init(window_extent);
 
     var engine = Self{
         .window = win,
+        .window_extent = window_extent,
         .cpu_allocator = a,
         .buffer_deletion_queue = std.ArrayList(t.AllocatedBuffer).init(a),
         .image_deletion_queue = std.ArrayList(t.AllocatedImage).init(a),
@@ -112,6 +111,7 @@ pub fn init(a: std.mem.Allocator) Self {
     engine.init_instance();
     engine.window.create_surface(&engine);
     engine.init_device();
+
 
     const allocator_ci = std.mem.zeroInit(c.VmaAllocatorCreateInfo, .{
         .physicalDevice = engine.gpu,
@@ -128,12 +128,13 @@ pub fn init(a: std.mem.Allocator) Self {
     engine.init_default_data();
     engine.init_pipelines();
     c.luaL_openlibs(engine.lua_state);
+    _ = c.SDL_ShowWindow(engine.window.sdl_window);
     return engine;
 }
 
 pub fn run(self: *Self) void {
-    // var timer = std.time.Timer.start() catch @panic("Failed to start timer");
-    // var delta: f32 = undefined;
+    var timer = std.time.Timer.start() catch @panic("Failed to start timer");
+    var delta: u64 = undefined;
     var quit = false;
     var event: c.SDL_Event = undefined;
 
@@ -171,11 +172,22 @@ pub fn run(self: *Self) void {
                         };
                     }
                 },
+                c.SDL_EVENT_WINDOW_RESIZED => {
+                    self.resize_request = true;
+                },
                 c.SDL_EVENT_KEY_UP => {
                     s.handle_key_up(self, event.key);
                 },
                 else => {},
             }
+        }
+        if (self.frame_number % 100 == 0) {
+            delta = timer.read();
+            log.info("FPS: {d}", .{@as(u32, (@intFromFloat(100_000_000_000.0 / @as(f32, @floatFromInt(delta)))))});
+            timer.reset();
+        }
+        if (self.resize_request) {
+            self.resize_swapchain();
         }
         self.draw();
     }
@@ -212,10 +224,15 @@ pub fn cleanup(self: *Self) void {
         c.vkDestroyFence(self.device, frame.render_fence, vk_alloc_cbs);
         c.vkDestroySemaphore(self.device, frame.render_semaphore, vk_alloc_cbs);
         c.vkDestroySemaphore(self.device, frame.swapchain_semaphore, vk_alloc_cbs);
+        frame.frame_descriptors.destroy_pools(self.device);
     }
     c.vkDestroyFence(self.device, self.immidiate_fence, vk_alloc_cbs);
     c.vkDestroyCommandPool(self.device, self.immidiate_command_pool, vk_alloc_cbs);
+
     c.vkDestroySwapchainKHR(self.device, self.swapchain, vk_alloc_cbs);
+    for (self.swapchain_image_views) |view| {
+        c.vkDestroyImageView(self.device, view, vk_alloc_cbs);
+    }
     self.cpu_allocator.free(self.swapchain_image_views);
     self.cpu_allocator.free(self.swapchain_images);
     c.vmaDestroyAllocator(self.gpu_allocator);
@@ -365,10 +382,18 @@ fn get_current_frame(self: *Self) t.FrameData {
 fn draw(self: *Self) void {
     const timeout: u64 = 4_000_000_000; // 4 second in nanonesconds
     const frame = self.frames[@intCast(@mod(self.frame_number, FRAME_OVERLAP))]; // Get the current frame data
-    check_vk(c.vkWaitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, timeout)) catch @panic("Failed to wait for render fence");
+    check_vk(c.vkWaitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, timeout)) catch |err| {
+        std.log.err("Failed to wait for render fence with error: {s}", .{@errorName(err)});
+        @panic("Failed to wait for render fence");
+    };
+    frame.frame_descriptors.clear_pools(self.device);
 
     var swapchain_image_index: u32 = undefined;
-    check_vk(c.vkAcquireNextImageKHR(self.device, self.swapchain, timeout, frame.swapchain_semaphore, null, &swapchain_image_index)) catch @panic("Failed to acquire swapchain image");
+    var e = c.vkAcquireNextImageKHR(self.device, self.swapchain, timeout, frame.swapchain_semaphore, null, &swapchain_image_index);
+    if (e == c.VK_ERROR_OUT_OF_DATE_KHR) {
+        self.resize_request = true;
+        return;
+    }
 
     check_vk(c.vkResetFences(self.device, 1, &frame.render_fence)) catch @panic("Failed to reset render fence");
     check_vk(c.vkResetCommandBuffer(frame.main_command_buffer, 0)) catch @panic("Failed to reset command buffer");
@@ -379,8 +404,8 @@ fn draw(self: *Self) void {
         .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     });
 
-    self.draw_extent.width = self.draw_image_extent.width;
-    self.draw_extent.height = self.draw_image_extent.height;
+    self.draw_extent.width = @intFromFloat(@as(f32, @floatFromInt(@min(self.swapchain_extent.width, self.draw_image_extent.width))) * render_scale);
+    self.draw_extent.height = @intFromFloat(@as(f32, @floatFromInt(@min(self.swapchain_extent.height, self.draw_image_extent.height))) * render_scale);
 
     check_vk(c.vkBeginCommandBuffer(cmd, &cmd_begin_info)) catch @panic("Failed to begin command buffer");
 
@@ -424,7 +449,10 @@ fn draw(self: *Self) void {
         .pSignalSemaphoreInfos = &signal_info,
     });
 
-    check_vk(c.vkQueueSubmit2(self.graphics_queue, 1, &submit, frame.render_fence)) catch @panic("Failed to submit to graphics queue");
+    check_vk(c.vkQueueSubmit2(self.graphics_queue, 1, &submit, frame.render_fence)) catch |err| {
+        std.log.err("Failed to submit to graphics queue with error: {s}", .{@errorName(err)});
+        @panic("Failed to submit to graphics queue");
+    };
 
     const present_info = std.mem.zeroInit(c.VkPresentInfoKHR, .{
         .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -434,15 +462,40 @@ fn draw(self: *Self) void {
         .pSwapchains = &self.swapchain,
         .pImageIndices = &swapchain_image_index,
     });
-    check_vk(c.vkQueuePresentKHR(self.graphics_queue, &present_info)) catch @panic("Failed to present swapchain image");
+    e = c.vkQueuePresentKHR(self.graphics_queue, &present_info);
+    if (e == c.VK_ERROR_OUT_OF_DATE_KHR) {
+        self.resize_request = true;
+    }
     self.frame_number +%= 1;
+}
+
+fn resize_swapchain(self: *Self) void {
+    // log.info("Resizing swapchain", .{});
+    check_vk(c.vkDeviceWaitIdle(self.device)) catch |err| {
+        std.log.err("Failed to wait for device idle with error: {s}", .{@errorName(err)});
+        @panic("Failed to wait for device idle");
+    };
+    c.vkDestroySwapchainKHR(self.device, self.swapchain, vk_alloc_cbs);
+    for (self.swapchain_image_views) |view| {
+        c.vkDestroyImageView(self.device, view, vk_alloc_cbs);
+    }
+    self.cpu_allocator.free(self.swapchain_image_views);
+    self.cpu_allocator.free(self.swapchain_images);
+
+    var win_width: c_int = undefined;
+    var win_height: c_int = undefined;
+    check_vk(c.SDL_GetWindowSize(self.window.sdl_window, &win_width, &win_height)) catch @panic("Failed to get window size");
+    self.window_extent.width = @intCast(win_width);
+    self.window_extent.height = @intCast(win_height);
+    self.create_swapchain(self.window_extent.width, self.window_extent.height);
+    self.resize_request = false;
 }
 
 fn draw_background(self: *Self, cmd: c.VkCommandBuffer) void {
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.gradient_pipeline);
     c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.gradient_pipeline_layout, 0, 1, &self.draw_image_descriptors, 0, null);
     c.vkCmdPushConstants(cmd, self.gradient_pipeline_layout, c.VK_SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(t.ComputePushConstants), &self.pc);
-    c.vkCmdDispatch(cmd, self.draw_extent.width / 16, self.draw_extent.height / 16, 1);
+    c.vkCmdDispatch(cmd, self.window_extent.width / 32, self.window_extent.height / 32, 1);
 }
 
 fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
@@ -460,7 +513,7 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
         .loadOp = c.VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp = c.VK_ATTACHMENT_STORE_OP_STORE,
         .clearValue = .{
-            .depthStencil = .{ .depth = 0.0, .stencil = 0 },
+            .depthStencil = .{ .depth = 0.0, .stencil = 0.0 },
         },
     });
 
@@ -486,6 +539,8 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
         .maxDepth = 1.0,
     });
 
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.mesh_pipeline);
+
     c.vkCmdSetViewport(cmd, 0, 1, &viewport);
 
     const scissor = std.mem.zeroInit(c.VkRect2D, .{
@@ -494,7 +549,6 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
     });
 
     c.vkCmdSetScissor(cmd, 0, 1, &scissor);
-    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.mesh_pipeline);
     var view = m.Mat4.rotation(.{ .x = 1.0, .y = 0.0, .z = 0.0 }, std.math.pi / 2.0);
     view = view.rotate(.{ .x = 0.0, .y = 1.0, .z = 0.0 }, std.math.pi);
     view = view.translate(.{ .x = 0.0, .y = 0.0, .z = -5.0 });
@@ -531,16 +585,6 @@ fn create_buffer(self: *Self, alloc_size: usize, usage: c.VkBufferUsageFlags, me
 }
 
 fn init_default_data(self: *Self) void {
-    var rect_vertices = [_]t.Vertex{
-        .{ .position = m.Vec3{ .x = 0.5, .y = -0.5, .z = 0.0 }, .color = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 1.0 } },
-        .{ .position = m.Vec3{ .x = 0.5, .y = 0.5, .z = 0.0 }, .color = m.Vec4{ .x = 0.5, .y = 0.5, .z = 0.5, .w = 1.0 } },
-        .{ .position = m.Vec3{ .x = -0.5, .y = -0.5, .z = 0.0 }, .color = m.Vec4{ .x = 1.0, .y = 0.0, .z = 0.0, .w = 1.0 } },
-        .{ .position = m.Vec3{ .x = -0.5, .y = 0.5, .z = 0.0 }, .color = m.Vec4{ .x = 0.0, .y = 1.0, .z = 0.0, .w = 1.0 } },
-    };
-    var rect_indices = [_]u32{ 0, 1, 2, 2, 1, 3 };
-    self.rectangle = self.upload_mesh(&rect_indices, &rect_vertices);
-    self.buffer_deletion_queue.append(self.rectangle.vertex_buffer) catch @panic("Out of memory");
-    self.buffer_deletion_queue.append(self.rectangle.index_buffer) catch @panic("Out of memory");
     self.suzanne = load.load_gltf_meshes(self, "assets/suzanne.glb") catch @panic("Failed to load suzanne mesh");
     std.log.info("Initialized default data", .{});
 }
@@ -553,7 +597,8 @@ fn init_descriptors(self: *Self) void {
     self.global_descriptor_allocator.init_pool(self.device, 10, &sizes, self.cpu_allocator);
 
     {
-        var builder = d.DescriptorLayoutBuilder{ .bindings = std.ArrayList(c.VkDescriptorSetLayoutBinding).init(self.cpu_allocator) };
+        var builder = d.DescriptorLayoutBuilder{};
+        builder.init(self.cpu_allocator);
         defer builder.bindings.deinit();
         builder.add_binding(0, c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
         self.draw_image_descriptor_layout = builder.build(self.device, c.VK_SHADER_STAGE_COMPUTE_BIT, null, 0);
@@ -561,21 +606,22 @@ fn init_descriptors(self: *Self) void {
 
     self.draw_image_descriptors = self.global_descriptor_allocator.allocate(self.device, self.draw_image_descriptor_layout);
 
-    const image_info = std.mem.zeroInit(c.VkDescriptorImageInfo, .{
-        .imageView = self.draw_image_view,
-        .imageLayout = c.VK_IMAGE_LAYOUT_GENERAL,
-    });
+    var writer = d.DescriptorWriter{};
+    writer.init(self.cpu_allocator);
+    writer.write_image(0, self.draw_image_view, null, c.VK_IMAGE_LAYOUT_GENERAL, c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+    writer.update_set(self.device, self.draw_image_descriptors);
 
-    const write = std.mem.zeroInit(c.VkWriteDescriptorSet, .{
-        .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = self.draw_image_descriptors,
-        .dstBinding = 0,
-        .descriptorCount = 1,
-        .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        .pImageInfo = &image_info,
-    });
+    for (&self.frames) |*frame| {
+        frame.frame_descriptors = d.DescriptorAllocatorGrowable{};
+        const ratios = [_]d.DescriptorAllocatorGrowable.PoolSizeRatio{
+            .{.ratio=3,.type=c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
+            .{.ratio=3,.type=c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
+            .{.ratio=3,.type=c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
+            .{.ratio=4,.type=c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER}
+        };
 
-    c.vkUpdateDescriptorSets(self.device, 1, &write, 0, null);
+        frame.frame_descriptors.init(self.device, 1000, ratios);
+    }
     log.info("Initialized descriptors", .{});
 }
 
@@ -609,6 +655,7 @@ fn init_device(self: *Self) void {
         .min_api_version = c.VK_MAKE_VERSION(1, 3, 0),
         .required_extensions = required_device_extensions,
         .surface = self.window.surface,
+        // .criteria = .PreferIntegrated,
         .criteria = .PreferDiscrete,
     }) catch |err| {
         log.err("Failed to select physical device with error: {s}", .{@errorName(err)});
@@ -660,11 +707,7 @@ fn init_device(self: *Self) void {
     self.transfer_queue = device.transfer_queue;
 }
 
-fn init_swapchain(self: *Self) void {
-    var win_width: c_int = undefined;
-    var win_height: c_int = undefined;
-    r.check_sdl(c.SDL_GetWindowSize(self.window.window, &win_width, &win_height));
-
+fn create_swapchain(self: *Self, width: u32, height: u32) void {
     const swapchain = vki.Swapchain.create(self.cpu_allocator, .{
         .physical_device = self.gpu,
         .graphics_queue_family = self.graphics_queue_family,
@@ -672,9 +715,10 @@ fn init_swapchain(self: *Self) void {
         .device = self.device,
         .surface = self.window.surface,
         .old_swapchain = null,
-        .vsync = true,
-        .window_width = @intCast(win_width),
-        .window_height = @intCast(win_height),
+        .vsync = false,
+        .format = .{ .format = c.VK_FORMAT_B8G8R8A8_SRGB, .colorSpace = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR },
+        .window_width = width,
+        .window_height = height,
         .alloc_cb = vk_alloc_cbs,
     }) catch @panic("Failed to create swapchain");
 
@@ -683,15 +727,18 @@ fn init_swapchain(self: *Self) void {
     self.swapchain_extent = swapchain.extent;
     self.swapchain_images = swapchain.images;
     self.swapchain_image_views = swapchain.image_views;
+}
 
-    for (self.swapchain_image_views) |view|
-        self.imageview_deletion_queue.append(view) catch @panic("Out of memory");
+fn init_swapchain(self: *Self) void {
+    self.create_swapchain(self.window_extent.width, self.window_extent.height);
     log.info("Created swapchain", .{});
+
     self.draw_image_extent = c.VkExtent3D{
-        .width = @intCast(win_width),
-        .height = @intCast(win_height),
+        .width = self.window_extent.width,
+        .height = self.window_extent.height,
         .depth = 1,
     };
+
     self.draw_image_format = c.VK_FORMAT_R16G16B16A16_SFLOAT;
     const draw_image_ci = std.mem.zeroInit(c.VkImageCreateInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -704,10 +751,12 @@ fn init_swapchain(self: *Self) void {
         .tiling = c.VK_IMAGE_TILING_OPTIMAL,
         .usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_STORAGE_BIT,
     });
+
     const draw_image_ai = std.mem.zeroInit(c.VmaAllocationCreateInfo, .{
         .usage = c.VMA_MEMORY_USAGE_GPU_ONLY,
         .requiredFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
     });
+
     check_vk(c.vmaCreateImage(self.gpu_allocator, &draw_image_ci, &draw_image_ai, &self.draw_image.image, &self.draw_image.allocation, null)) catch @panic("Failed to create draw image");
     const draw_image_view_ci = std.mem.zeroInit(c.VkImageViewCreateInfo, .{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -722,6 +771,7 @@ fn init_swapchain(self: *Self) void {
             .layerCount = 1,
         },
     });
+
     check_vk(c.vkCreateImageView(self.device, &draw_image_view_ci, vk_alloc_cbs, &self.draw_image_view)) catch @panic("Failed to create draw image view");
 
     self.depth_image_extent = self.draw_image_extent;
@@ -850,14 +900,15 @@ fn init_mesh_pipeline(self: *Self) void {
     pipeline_builder.set_shaders(vertex_module, fragment_module);
     pipeline_builder.set_input_topology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
     pipeline_builder.set_polygon_mode(c.VK_POLYGON_MODE_FILL);
-    pipeline_builder.set_cull_mode(c.VK_CULL_MODE_NONE, c.VK_FRONT_FACE_CLOCKWISE);
+    pipeline_builder.set_cull_mode(c.VK_CULL_MODE_BACK_BIT, c.VK_FRONT_FACE_CLOCKWISE);
     pipeline_builder.set_multisampling_none();
     pipeline_builder.disable_blending();
+    // pipeline_builder.enable_blending_additive();
+    // pipeline_builder.enable_blending_alpha();
     // pipeline_builder.disable_depth_test();
     pipeline_builder.enable_depth_test(true, c.VK_COMPARE_OP_GREATER_OR_EQUAL);
     pipeline_builder.set_color_attachment_format(self.draw_image_format);
     pipeline_builder.set_depth_format(self.depth_image_format);
-    // pipeline_builder.set_depth_format(c.VK_FORMAT_UNDEFINED);
     self.mesh_pipeline = pipeline_builder.build_pipeline(self.device);
     c.vkDestroyShaderModule(self.device, vertex_module, vk_alloc_cbs);
     c.vkDestroyShaderModule(self.device, fragment_module, vk_alloc_cbs);
