@@ -142,8 +142,8 @@ pub fn load_gltf_meshes(eng: *engine, path: []const u8) !ArrayList(types.MeshAss
             }
         }
         new_mesh.mesh_buffers = eng.upload_mesh(indices.items, vertices.items);
-        try eng.buffer_deletion_queue.append(new_mesh.mesh_buffers.index_buffer);
-        try eng.buffer_deletion_queue.append(new_mesh.mesh_buffers.vertex_buffer);
+        eng.buffer_deletion_queue.push(new_mesh.mesh_buffers.index_buffer);
+        eng.buffer_deletion_queue.push(new_mesh.mesh_buffers.vertex_buffer);
         try meshes.append(new_mesh);
     }
     return meshes;

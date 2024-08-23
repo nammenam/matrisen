@@ -1,4 +1,5 @@
 const std = @import("std");
+const t = @import("types.zig");
 const c = @import("clibs.zig");
 const log = std.log.scoped(.vkInit);
 
@@ -755,3 +756,133 @@ fn default_debug_callback(
 
     return c.VK_FALSE;
 }
+
+
+
+
+
+
+pub const BufferDeletionStack = struct {
+    const stack_type = std.ArrayList(t.AllocatedBuffer);
+    stack: stack_type = undefined,
+
+    pub fn init(self: *@This(), alloc: std.mem.Allocator) void {
+        self.stack = stack_type.init(alloc);
+    }
+
+    pub fn push(self: *@This(), buf: t.AllocatedBuffer) void {
+        self.stack.append(buf) catch @panic("failed to append to deletion stack");
+    }
+
+    pub fn flush(self: *@This(), alloc: c.VmaAllocator) void {
+        while (self.stack.popOrNull()) |entry| {
+            c.vmaDestroyBuffer(alloc, entry.buffer, entry.allocation);
+        }
+    }
+
+    pub fn deinit(self: *@This(), alloc: c.VmaAllocator) void {
+        self.flush(alloc);
+        self.stack.deinit();
+    }
+};
+
+pub const ImageDeletionStack = struct {
+    const stack_type = std.ArrayList(t.AllocatedImage);
+    stack: stack_type = undefined,
+
+    pub fn init(self: *@This(), alloc: std.mem.Allocator) void {
+        self.stack = stack_type.init(alloc);
+    }
+
+    pub fn push(self: *@This(), img: t.AllocatedImage) void {
+        self.stack.append(img) catch @panic("failed to append to deletion stack");
+    }
+
+    pub fn flush(self: *@This(), alloc: c.VmaAllocator) void {
+        while (self.stack.popOrNull()) |entry| {
+            c.vmaDestroyImage(alloc, entry.image, entry.allocation);
+        }
+    }
+
+    pub fn deinit(self: *@This(), alloc: c.VmaAllocator) void {
+        self.flush(alloc);
+        self.stack.deinit();
+    }
+};
+
+pub const PipelineDeletionStack = struct {
+    const stack_type = std.ArrayList(c.VkPipeline);
+    stack: stack_type = undefined,
+
+    pub fn init(self: *@This(), alloc: std.mem.Allocator) void {
+        self.stack = stack_type.init(alloc);
+    }
+
+    pub fn push(self: *@This(), pip: c.VkPipeline) void {
+        self.stack.append(pip) catch @panic("failed to append to deletion stack");
+    }
+
+    pub fn flush(self: *@This(), device: c.VkDevice, cbs: ?*c.VkAllocationCallbacks) void {
+        while (self.stack.popOrNull()) |entry| {
+            c.vkDestroyPipeline(device, entry, cbs);
+        }
+    }
+
+    pub fn deinit(self: *@This(), device: c.VkDevice, cbs: ?*c.VkAllocationCallbacks) void {
+        self.flush(device, cbs);
+        self.stack.deinit();
+    }
+};
+
+
+
+pub const PipelineLayoutDeletionStack = struct {
+    const stack_type = std.ArrayList(c.VkPipelineLayout);
+    stack: stack_type = undefined,
+
+    pub fn init(self: *@This(), alloc: std.mem.Allocator) void {
+        self.stack = stack_type.init(alloc);
+    }
+
+    pub fn push(self: *@This(), pip: c.VkPipelineLayout) void {
+        self.stack.append(pip) catch @panic("failed to append to deletion stack");
+    }
+
+    pub fn flush(self: *@This(), device: c.VkDevice, cbs: ?*c.VkAllocationCallbacks) void {
+        while (self.stack.popOrNull()) |entry| {
+            c.vkDestroyPipelineLayout(device, entry, cbs);
+        }
+    }
+
+    pub fn deinit(self: *@This(), device: c.VkDevice, cbs: ?*c.VkAllocationCallbacks) void {
+        self.flush(device, cbs);
+        self.stack.deinit();
+    }
+};
+
+
+
+
+pub const ImageViewDeletionStack = struct {
+    const stack_type = std.ArrayList(c.VkImageView);
+    stack: stack_type = undefined,
+
+    pub fn init(self: *@This(), alloc: std.mem.Allocator) void {
+        self.stack = stack_type.init(alloc);
+    }
+
+    pub fn push(self: *@This(), pip: c.VkImageView) void {
+        self.stack.append(pip) catch @panic("failed to append to deletion stack");
+    }
+
+    pub fn flush(self: *@This(), device: c.VkDevice, cbs: ?*c.VkAllocationCallbacks) void {
+        while (self.stack.popOrNull()) |entry| {
+            c.vkDestroyImageView(device, entry, cbs);
+        }
+    }
+
+    pub fn deinit(self: *@This(), device: c.VkDevice, cbs: ?*c.VkAllocationCallbacks) void {
+        self.flush(device, cbs);
+        self.stack.deinit();
+    }
+};

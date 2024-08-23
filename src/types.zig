@@ -1,6 +1,7 @@
 const std = @import("std");
 const m = @import("3Dmath.zig");
 const DescriptorAllocatorGrowable = @import("descriptors.zig").DescriptorAllocatorGrowable;
+const BufferDeletionStack = @import("vulkanutils.zig").BufferDeletionStack;
 const c = @import("clibs.zig");
 const Gltf = @import("assetloader.zig");
 
@@ -9,6 +10,8 @@ pub const AllocatedBuffer = struct {
     allocation: c.VmaAllocation,
     info: c.VmaAllocationInfo,
 };
+
+
 
 pub const AllocatedImage = struct {
     image: c.VkImage,
@@ -49,7 +52,8 @@ pub const FrameData = struct {
     render_fence: c.VkFence = null,
     command_pool: c.VkCommandPool = null,
     main_command_buffer: c.VkCommandBuffer = null,
-    frame_descriptors: DescriptorAllocatorGrowable = undefined,
+    frame_descriptors: DescriptorAllocatorGrowable = DescriptorAllocatorGrowable{},
+    buffer_deletion_queue: BufferDeletionStack = BufferDeletionStack{},
 };
 
 pub const ComputePushConstants = extern struct {

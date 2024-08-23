@@ -99,30 +99,31 @@ pub const DescriptorAllocatorGrowable = struct {
         type: c.VkDescriptorType,
     };
 
-    ready_pools: std.ArrayList(c.VkDescriptorPool),
-    full_pools: std.ArrayList(c.VkDescriptorPool),
-    ratios: std.ArrayList(PoolSizeRatio),
+    ready_pools: std.ArrayList(c.VkDescriptorPool) = undefined,
+    full_pools: std.ArrayList(c.VkDescriptorPool) = undefined,
+    ratios: std.ArrayList(PoolSizeRatio) = undefined,
     sets_per_pool: u32 = 0,
 
-    pub fn init(self: *DescriptorAllocator, device: c.VkDevice, max_sets: u32, pool_ratios: []PoolSizeRatio, alloc: std.mem.Allocator) void {
+    pub fn init(self: *@This(), device: c.VkDevice, initial_sets: u32, pool_ratios: []PoolSizeRatio, alloc: std.mem.Allocator) void {
         self.ratios = std.ArrayList(PoolSizeRatio).init(alloc);
+        self.ratios.clearAndFree();
         self.ready_pools = std.ArrayList(c.VkDescriptorPool).init(alloc);
         self.full_pools = std.ArrayList(c.VkDescriptorPool).init(alloc);
 
         self.ratios.appendSlice(pool_ratios) catch @panic("Failed to append to ratios");
-        const new_pool = create_pool(device, max_sets, pool_ratios, std.heap.page_allocator);
-        self.sets_per_pool = max_sets * 1.5;
+        const new_pool = create_pool(device, initial_sets, pool_ratios, std.heap.page_allocator);
+        self.sets_per_pool = @intFromFloat(@as(f32, @floatFromInt(initial_sets)) * 1.5);
         self.ready_pools.append(new_pool) catch @panic("Failed to append to ready_pools");
     }
 
-    pub fn deinit(self: *DescriptorAllocatorGrowable, device: c.VkDevice) void {
+    pub fn deinit(self: *@This(), device: c.VkDevice) void {
         self.destroy_pools(device);
         self.ready_pools.deinit();
         self.full_pools.deinit();
         self.ratios.deinit();
     }
 
-    pub fn clear_pools(self: *DescriptorAllocatorGrowable, device: c.VkDevice) void {
+    pub fn clear_pools(self: *@This(), device: c.VkDevice) void {
         for (self.ready_pools.items) |pool| {
             _ = c.vkResetDescriptorPool(device, pool, 0);
         }
@@ -132,7 +133,7 @@ pub const DescriptorAllocatorGrowable = struct {
         self.full_pools.clearAndFree();
     }
 
-    pub fn destroy_pools(self: *DescriptorAllocatorGrowable, device: c.VkDevice) void {
+    pub fn destroy_pools(self: *@This(), device: c.VkDevice) void {
         for (self.ready_pools.items) |pool| {
             _ = c.vkDestroyDescriptorPool(device, pool, null);
         }
@@ -143,10 +144,10 @@ pub const DescriptorAllocatorGrowable = struct {
         self.full_pools.clearAndFree();
     }
 
-    fn allocate(self: *DescriptorAllocatorGrowable, device: c.VkDevice, layout: c.VkDescriptorSetLayout, pNext: ?*anyopaque) c.VkDescriptorSet {
-        const pool_to_use = self.get_pool(device);
+    pub fn allocate(self: *@This(), device: c.VkDevice, layout: c.VkDescriptorSetLayout, pNext: ?*anyopaque) c.VkDescriptorSet {
+        var pool_to_use = self.get_pool(device);
 
-        const info = c.VkDescriptorSetAllocateInfo{
+        var info = c.VkDescriptorSetAllocateInfo{
             .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .pNext = pNext,
             .descriptorPool = pool_to_use,
@@ -161,17 +162,17 @@ pub const DescriptorAllocatorGrowable = struct {
             info.descriptorPool = pool_to_use;
             vki.check_vk(c.vkAllocateDescriptorSets(device, &info, &descriptor_set)) catch @panic("Failed to allocate descriptor set");
         }
-        self.full_pools.append(pool_to_use) catch @panic("Failed to append to full_pools");
+        self.ready_pools.append(pool_to_use) catch @panic("Failed to append to full_pools");
         return descriptor_set;
     }
 
-    fn get_pool(self: *DescriptorAllocatorGrowable, device: c.VkDevice) c.VkDescriptorPool {
-        const new_pool: c.VkDescriptorPool = undefined;
+    fn get_pool(self: *@This(), device: c.VkDevice) c.VkDescriptorPool {
+        var new_pool: c.VkDescriptorPool = undefined;
         if (self.ready_pools.items.len != 0) {
             new_pool = self.ready_pools.pop();
         } else {
             new_pool = create_pool(device, self.sets_per_pool, self.ratios.items, std.heap.page_allocator);
-            self.sets_per_pool *= 1.5;
+            self.sets_per_pool = @intFromFloat(@as(f32, @floatFromInt(self.sets_per_pool)) * 1.5);
             if (self.sets_per_pool > 4092) {
                 self.sets_per_pool = 4092;
             }
@@ -215,37 +216,42 @@ pub const DescriptorWriter = struct {
         self.image_infos = std.ArrayList(c.VkDescriptorImageInfo).init(allocator);
     }
 
-    pub fn write_buffer(self: *DescriptorWriter, binding: i32, buffer: c.VkBuffer, size: usize, offset: usize, ty: c.VkDescriptorType) void {
-        const info = std.mem.zeroInit(c.VkDescriptorBufferInfo{
-            .buffer = buffer,
-            .offset = offset,
-            .range = size,
-        });
-        self.buffer_infos.append(info);
-        const write = c.VkWriteDescriptorSet{ .sType = .VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = binding, .dstSet = null, .descriptorCount = 1, .descriptorType = ty, .pBufferInfo = &info };
-        self.writes.append(write);
+    pub fn deinit(self: *@This()) void {
+        self.writes.deinit();
+        self.buffer_infos.deinit();
+        self.image_infos.deinit();
     }
 
-    pub fn write_image(self: *DescriptorWriter, binding: i32, image: c.VkImageView, sampler: c.VkSampler, layout: c.VkImageLayout, ty: c.VkDescriptorType) void {
-        const info = std.mem.zeroInit(c.VkDescriptorImageInfo{
-            .sampler = sampler,
-            .imageView = image,
-            .imageLayout = layout,
-        });
-        self.image_infos.append(info);
-        const write = c.VkWriteDescriptorSet{ .sType = .VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = binding, .dstSet = null, .descriptorCount = 1, .descriptorType = ty, .pBufferInfo = &info };
-        self.writes.append(write);
+    pub fn write_buffer(self: *@This(), binding: u32, buffer: c.VkBuffer, size: usize, offset: usize, ty: c.VkDescriptorType) void {
+        const info_container = struct {
+            var info: c.VkDescriptorBufferInfo = c.VkDescriptorBufferInfo{};
+        };
+        info_container.info = c.VkDescriptorBufferInfo{ .buffer = buffer, .offset = offset, .range = size};
+        self.buffer_infos.append(info_container.info) catch @panic("failed to append");
+        const write = c.VkWriteDescriptorSet{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = binding, .dstSet = null, .descriptorCount = 1, .descriptorType = ty, .pBufferInfo = &info_container.info };
+        self.writes.append(write) catch @panic("failed to append");
     }
 
-    pub fn clear(self: *DescriptorWriter) void {
+    pub fn write_image(self: *@This(), binding: u32, image: c.VkImageView, sampler: c.VkSampler, layout: c.VkImageLayout, ty: c.VkDescriptorType) void {
+        const info_container = struct {
+            var info: c.VkDescriptorImageInfo = c.VkDescriptorImageInfo{};
+        };
+        info_container.info = c.VkDescriptorImageInfo{ .sampler = sampler, .imageView = image, .imageLayout = layout};
+
+        self.image_infos.append(info_container.info) catch @panic("append failed");
+        const write = c.VkWriteDescriptorSet{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = binding, .dstSet = null, .descriptorCount = 1, .descriptorType = ty, .pImageInfo = &info_container.info };
+        self.writes.append(write) catch @panic("append failed");
+    }
+
+    pub fn clear(self: *@This()) void {
         self.writes.clearAndFree();
         self.buffer_infos.clearAndFree();
         self.image_infos.clearAndFree();
     }
 
-    pub fn update_set(self: *DescriptorWriter, device: c.VkDevice, set: c.VkDescriptorSet) void {
-        for (&self.writes) |*write| {
-            write.dstSet = set;
+    pub fn update_set(self: *@This(), device: c.VkDevice, set: c.VkDescriptorSet) void {
+        for (self.writes.items) |*write| {
+            write.*.dstSet = set;
         }
         c.vkUpdateDescriptorSets(device, @intCast(self.writes.items.len), self.writes.items.ptr, 0, null);
     }

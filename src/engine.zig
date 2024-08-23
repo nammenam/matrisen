@@ -24,9 +24,9 @@ const background_color_dark: t.ComputePushConstants = .{
     .data4 = m.Vec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.0 },
 };
 const FRAME_OVERLAP = 2;
-const render_scale = 0.1;
-
+const render_scale = 0.2;
 const Self = @This();
+
 resize_request: bool = false,
 window: r.WindowManager = undefined,
 window_extent: c.VkExtent2D = undefined,
@@ -55,11 +55,11 @@ transfer_queue: c.VkQueue = null,
 graphics_queue_family: u32 = undefined,
 present_queue_family: u32 = undefined,
 // delete queues
-buffer_deletion_queue: std.ArrayList(t.AllocatedBuffer),
-image_deletion_queue: std.ArrayList(t.AllocatedImage),
-imageview_deletion_queue: std.ArrayList(c.VkImageView),
-pipeline_deletion_queue: std.ArrayList(c.VkPipeline),
-pipeline_layout_deletion_queue: std.ArrayList(c.VkPipelineLayout) = undefined,
+buffer_deletion_queue: vki.BufferDeletionStack = vki.BufferDeletionStack{},
+image_deletion_queue:vki.ImageDeletionStack = vki.ImageDeletionStack{},
+imageview_deletion_queue:vki.ImageViewDeletionStack = vki.ImageViewDeletionStack{},
+pipeline_deletion_queue:vki.PipelineDeletionStack = vki.PipelineDeletionStack{},
+pipeline_layout_deletion_queue:vki.PipelineLayoutDeletionStack = vki.PipelineLayoutDeletionStack{},
 // swapchain and sync
 swapchain: c.VkSwapchainKHR = null,
 swapchain_format: c.VkFormat = undefined,
@@ -74,8 +74,7 @@ frame_number: u32 = 0,
 // descriptors
 global_descriptor_allocator: d.DescriptorAllocator = undefined,
 draw_image_descriptors: c.VkDescriptorSet = undefined,
-draw_image_descriptor_layout: c.VkDescriptorSetLayout = undefined,
-// pipelines
+draw_image_descriptor_layout: c.VkDescriptorSetLayout = undefined,// pipelines
 gradient_pipeline_layout: c.VkPipelineLayout = null,
 gradient_pipeline: c.VkPipeline = null,
 triangle_pipeline_layout: c.VkPipelineLayout = null,
@@ -83,9 +82,11 @@ triangle_pipeline: c.VkPipeline = null,
 mesh_pipeline_layout: c.VkPipelineLayout = null,
 mesh_pipeline: c.VkPipeline = null,
 
+// other
 rectangle: t.GPUMeshBuffers = undefined,
 suzanne: std.ArrayList(t.MeshAsset),
-// other
+scene_data: t.GPUSceneData = undefined,
+gpu_scene_data_descriptor_layout: c.VkDescriptorSetLayout = undefined,
 lua_state: ?*c.lua_State,
 debug_messenger: c.VkDebugUtilsMessengerEXT = null,
 pc: t.ComputePushConstants = background_color_light,
@@ -99,15 +100,14 @@ pub fn init(a: std.mem.Allocator) Self {
         .window = win,
         .window_extent = window_extent,
         .cpu_allocator = a,
-        .buffer_deletion_queue = std.ArrayList(t.AllocatedBuffer).init(a),
-        .image_deletion_queue = std.ArrayList(t.AllocatedImage).init(a),
-        .imageview_deletion_queue = std.ArrayList(c.VkImageView).init(a),
-        .pipeline_deletion_queue = std.ArrayList(c.VkPipeline).init(a),
-        .pipeline_layout_deletion_queue = std.ArrayList(c.VkPipelineLayout).init(a),
         .suzanne = std.ArrayList(t.MeshAsset).init(a),
         .lua_state = c.luaL_newstate(),
     };
-
+    engine.buffer_deletion_queue.init(a);
+    engine.image_deletion_queue.init(a);
+    engine.imageview_deletion_queue.init(a);
+    engine.pipeline_deletion_queue.init(a);
+    engine.pipeline_layout_deletion_queue.init(a);
     engine.init_instance();
     engine.window.create_surface(&engine);
     engine.init_device();
@@ -195,36 +195,21 @@ pub fn run(self: *Self) void {
 
 pub fn cleanup(self: *Self) void {
     check_vk(c.vkDeviceWaitIdle(self.device)) catch @panic("Failed to wait for device idle");
-    while (self.imageview_deletion_queue.popOrNull()) |entry| {
-        c.vkDestroyImageView(self.device, entry, vk_alloc_cbs);
-    }
-    self.imageview_deletion_queue.deinit();
-    while (self.image_deletion_queue.popOrNull()) |entry| {
-        c.vmaDestroyImage(self.gpu_allocator, entry.image, entry.allocation);
-    }
-    self.image_deletion_queue.deinit();
-    while (self.buffer_deletion_queue.popOrNull()) |entry| {
-        c.vmaDestroyBuffer(self.gpu_allocator, entry.buffer, entry.allocation);
-    }
-    self.buffer_deletion_queue.deinit();
-    while (self.pipeline_deletion_queue.popOrNull()) |entry| {
-        c.vkDestroyPipeline(self.device, entry, vk_alloc_cbs);
-    }
-    self.pipeline_deletion_queue.deinit();
-    while (self.pipeline_layout_deletion_queue.popOrNull()) |entry| {
-        c.vkDestroyPipelineLayout(self.device, entry, vk_alloc_cbs);
-    }
-    self.pipeline_layout_deletion_queue.deinit();
+    self.imageview_deletion_queue.deinit(self.device, vk_alloc_cbs);
+    self.image_deletion_queue.deinit(self.gpu_allocator);
+    self.buffer_deletion_queue.deinit(self.gpu_allocator);
+    self.pipeline_deletion_queue.deinit(self.device, vk_alloc_cbs);
+    self.pipeline_layout_deletion_queue.deinit(self.device, vk_alloc_cbs);
 
     c.vkDestroyDescriptorSetLayout(self.device, self.draw_image_descriptor_layout, vk_alloc_cbs);
     self.global_descriptor_allocator.clear_descriptors(self.device);
     self.global_descriptor_allocator.destroy_pool(self.device);
-    for (self.frames) |frame| {
+    for (&self.frames) |*frame| {
         c.vkDestroyCommandPool(self.device, frame.command_pool, vk_alloc_cbs);
         c.vkDestroyFence(self.device, frame.render_fence, vk_alloc_cbs);
         c.vkDestroySemaphore(self.device, frame.render_semaphore, vk_alloc_cbs);
         c.vkDestroySemaphore(self.device, frame.swapchain_semaphore, vk_alloc_cbs);
-        frame.frame_descriptors.destroy_pools(self.device);
+        frame.frame_descriptors.deinit(self.device);
     }
     c.vkDestroyFence(self.device, self.immidiate_fence, vk_alloc_cbs);
     c.vkDestroyCommandPool(self.device, self.immidiate_command_pool, vk_alloc_cbs);
@@ -381,11 +366,13 @@ fn get_current_frame(self: *Self) t.FrameData {
 
 fn draw(self: *Self) void {
     const timeout: u64 = 4_000_000_000; // 4 second in nanonesconds
-    const frame = self.frames[@intCast(@mod(self.frame_number, FRAME_OVERLAP))]; // Get the current frame data
+    var frame = self.get_current_frame();
     check_vk(c.vkWaitForFences(self.device, 1, &frame.render_fence, c.VK_TRUE, timeout)) catch |err| {
         std.log.err("Failed to wait for render fence with error: {s}", .{@errorName(err)});
         @panic("Failed to wait for render fence");
     };
+
+    frame.buffer_deletion_queue.flush(self.gpu_allocator);
     frame.frame_descriptors.clear_pools(self.device);
 
     var swapchain_image_index: u32 = undefined;
@@ -529,6 +516,21 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
         .pDepthAttachment = &depth_attachment,
     });
 
+    const gpu_scene_data_buffer =  self.create_buffer(@sizeOf(t.GPUSceneData),c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,c.VMA_MEMORY_USAGE_CPU_TO_GPU);
+    var frame = self.get_current_frame();
+    frame.buffer_deletion_queue.push(gpu_scene_data_buffer);
+
+    var data: ?*anyopaque = undefined;
+    check_vk(c.vmaMapMemory(self.gpu_allocator, gpu_scene_data_buffer.allocation, &data)) catch @panic("Failed to map memory");
+
+    const global_descriptor = frame.frame_descriptors.allocate(self.device,self.gpu_scene_data_descriptor_layout, null);
+
+    var writer = d.DescriptorWriter{};
+    writer.init(self.cpu_allocator);
+    defer writer.deinit();
+    writer.write_buffer(0,gpu_scene_data_buffer.buffer ,@sizeOf(t.GPUSceneData), 0 ,c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER );
+    writer.update_set(self.device, global_descriptor );
+    
     c.vkCmdBeginRendering(cmd, &render_info);
     const viewport = std.mem.zeroInit(c.VkViewport, .{
         .x = 0.0,
@@ -604,23 +606,31 @@ fn init_descriptors(self: *Self) void {
         self.draw_image_descriptor_layout = builder.build(self.device, c.VK_SHADER_STAGE_COMPUTE_BIT, null, 0);
     }
 
+    {
+        var builder = d.DescriptorLayoutBuilder{};
+        builder.init(self.cpu_allocator);
+        defer builder.bindings.deinit();
+        builder.add_binding(0, c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        self.gpu_scene_data_descriptor_layout = builder.build(self.device, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT,null,0 );
+    }
+
     self.draw_image_descriptors = self.global_descriptor_allocator.allocate(self.device, self.draw_image_descriptor_layout);
 
     var writer = d.DescriptorWriter{};
     writer.init(self.cpu_allocator);
-    writer.write_image(0, self.draw_image_view, null, c.VK_IMAGE_LAYOUT_GENERAL, c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+    defer writer.deinit();
+    writer.write_image(0, self.draw_image_view, null , c.VK_IMAGE_LAYOUT_GENERAL, c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
     writer.update_set(self.device, self.draw_image_descriptors);
 
     for (&self.frames) |*frame| {
-        frame.frame_descriptors = d.DescriptorAllocatorGrowable{};
-        const ratios = [_]d.DescriptorAllocatorGrowable.PoolSizeRatio{
+        var ratios = [_]d.DescriptorAllocatorGrowable.PoolSizeRatio{
             .{.ratio=3,.type=c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
             .{.ratio=3,.type=c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER},
             .{.ratio=3,.type=c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER},
             .{.ratio=4,.type=c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER}
         };
-
-        frame.frame_descriptors.init(self.device, 1000, ratios);
+        frame.frame_descriptors.init(self.device, 1000, &ratios, self.cpu_allocator);
+        frame.buffer_deletion_queue.init(self.cpu_allocator);
     }
     log.info("Initialized descriptors", .{});
 }
@@ -805,10 +815,10 @@ fn init_swapchain(self: *Self) void {
     });
     check_vk(c.vkCreateImageView(self.device, &depth_image_view_ci, vk_alloc_cbs, &self.depth_image_view)) catch @panic("Failed to create depth image view");
 
-    self.imageview_deletion_queue.append(self.draw_image_view) catch @panic("Out of memory");
-    self.image_deletion_queue.append(self.draw_image) catch @panic("Out of memory");
-    self.imageview_deletion_queue.append(self.depth_image_view) catch @panic("Out of memory");
-    self.image_deletion_queue.append(self.depth_image) catch @panic("Out of memory");
+    self.imageview_deletion_queue.push(self.draw_image_view);
+    self.image_deletion_queue.push(self.draw_image);
+    self.imageview_deletion_queue.push(self.depth_image_view);
+    self.image_deletion_queue.push(self.depth_image);
 
     log.info("Created depth image", .{});
 }
@@ -912,8 +922,8 @@ fn init_mesh_pipeline(self: *Self) void {
     self.mesh_pipeline = pipeline_builder.build_pipeline(self.device);
     c.vkDestroyShaderModule(self.device, vertex_module, vk_alloc_cbs);
     c.vkDestroyShaderModule(self.device, fragment_module, vk_alloc_cbs);
-    self.pipeline_deletion_queue.append(self.mesh_pipeline) catch @panic("Failed to append triangle pipeline to deletion queue");
-    self.pipeline_layout_deletion_queue.append(self.mesh_pipeline_layout) catch @panic("Failed to append triangle pipeline layout to deletion queue");
+    self.pipeline_deletion_queue.push(self.mesh_pipeline);
+    self.pipeline_layout_deletion_queue.push(self.mesh_pipeline_layout);
 }
 
 fn init_background_pipelines(self: *Self) void {
@@ -953,6 +963,6 @@ fn init_background_pipelines(self: *Self) void {
 
     check_vk(c.vkCreateComputePipelines(self.device, null, 1, &compute_ci, null, &self.gradient_pipeline)) catch @panic("Failed to create compute pipeline");
     c.vkDestroyShaderModule(self.device, comp_module, vk_alloc_cbs);
-    self.pipeline_deletion_queue.append(self.gradient_pipeline) catch @panic("Failed to append gradient pipeline to deletion queue");
-    self.pipeline_layout_deletion_queue.append(self.gradient_pipeline_layout) catch @panic("Failed to append gradient pipeline layout to deletion queue");
+    self.pipeline_deletion_queue.push(self.gradient_pipeline);
+    self.pipeline_layout_deletion_queue.push(self.gradient_pipeline_layout);
 }
