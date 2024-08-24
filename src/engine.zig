@@ -202,9 +202,11 @@ pub fn cleanup(self: *Self) void {
     self.pipeline_layout_deletion_queue.deinit(self.device, vk_alloc_cbs);
 
     c.vkDestroyDescriptorSetLayout(self.device, self.draw_image_descriptor_layout, vk_alloc_cbs);
+    c.vkDestroyDescriptorSetLayout(self.device, self.gpu_scene_data_descriptor_layout , vk_alloc_cbs );
     self.global_descriptor_allocator.clear_descriptors(self.device);
     self.global_descriptor_allocator.destroy_pool(self.device);
     for (&self.frames) |*frame| {
+        frame.buffer_deletion_queue.deinit(self.gpu_allocator);
         c.vkDestroyCommandPool(self.device, frame.command_pool, vk_alloc_cbs);
         c.vkDestroyFence(self.device, frame.render_fence, vk_alloc_cbs);
         c.vkDestroySemaphore(self.device, frame.render_semaphore, vk_alloc_cbs);
@@ -319,12 +321,11 @@ pub fn upload_mesh(self: *Self, indices: []u32, vertices: []t.Vertex) t.GPUMeshB
         c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, c.VMA_MEMORY_USAGE_GPU_ONLY);
 
     const staging = self.create_buffer(index_buffer_size + vertex_buffer_size, c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, c.VMA_MEMORY_USAGE_CPU_ONLY);
-
-    var data: ?*anyopaque = undefined;
-    check_vk(c.vmaMapMemory(self.gpu_allocator, staging.allocation, &data)) catch @panic("Failed to map memory");
     defer c.vmaDestroyBuffer(self.gpu_allocator, staging.buffer, staging.allocation);
-    defer c.vmaUnmapMemory(self.gpu_allocator, staging.allocation);
-    const byte_data = @as([*]u8, @ptrCast(data.?))[0..(vertex_buffer_size + index_buffer_size)];
+
+    const data: *anyopaque = staging.info.pMappedData.?;
+    
+    const byte_data = @as([*]u8, @ptrCast(data))[0..(vertex_buffer_size + index_buffer_size)];
     @memcpy(byte_data[0..vertex_buffer_size], std.mem.sliceAsBytes(vertices));
     @memcpy(byte_data[vertex_buffer_size..], std.mem.sliceAsBytes(indices));
     const submit_ctx = struct {
@@ -360,8 +361,8 @@ pub fn upload_mesh(self: *Self, indices: []u32, vertices: []t.Vertex) t.GPUMeshB
     return new_surface;
 }
 
-fn get_current_frame(self: *Self) t.FrameData {
-    return self.frames[@intCast(@mod(self.frame_number, FRAME_OVERLAP))];
+fn get_current_frame(self: *Self) *t.FrameData {
+    return &self.frames[@intCast(@mod(self.frame_number, FRAME_OVERLAP))];
 }
 
 fn draw(self: *Self) void {
@@ -520,8 +521,8 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
     var frame = self.get_current_frame();
     frame.buffer_deletion_queue.push(gpu_scene_data_buffer);
 
-    var data: ?*anyopaque = undefined;
-    check_vk(c.vmaMapMemory(self.gpu_allocator, gpu_scene_data_buffer.allocation, &data)) catch @panic("Failed to map memory");
+    const scene_uniform_data: *t.GPUSceneData = @alignCast(@ptrCast(gpu_scene_data_buffer.info.pMappedData.?));
+    scene_uniform_data.* = self.scene_data;
 
     const global_descriptor = frame.frame_descriptors.allocate(self.device,self.gpu_scene_data_descriptor_layout, null);
 

@@ -117,6 +117,7 @@ pub const DescriptorAllocatorGrowable = struct {
     }
 
     pub fn deinit(self: *@This(), device: c.VkDevice) void {
+        self.clear_pools(device);
         self.destroy_pools(device);
         self.ready_pools.deinit();
         self.full_pools.deinit();
