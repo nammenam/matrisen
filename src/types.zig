@@ -11,11 +11,20 @@ pub const AllocatedBuffer = struct {
     info: c.VmaAllocationInfo,
 };
 
-
-
 pub const AllocatedImage = struct {
     image: c.VkImage,
     allocation: c.VmaAllocation,
+};
+
+pub const ImageAndView = struct {
+    image: c.VkImage,
+    view: c.VkImageView,
+};
+
+pub const AllocatedImageAndView = struct {
+    allocation: c.VmaAllocation,
+    image: c.VkImage,
+    view: c.VkImageView,
 };
 
 pub const GPUMeshBuffers = struct {

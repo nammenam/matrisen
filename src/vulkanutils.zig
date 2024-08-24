@@ -787,25 +787,26 @@ pub const BufferDeletionStack = struct {
 };
 
 pub const ImageDeletionStack = struct {
-    const stack_type = std.ArrayList(t.AllocatedImage);
+    const stack_type = std.ArrayList(t.AllocatedImageAndView);
     stack: stack_type = undefined,
 
     pub fn init(self: *@This(), alloc: std.mem.Allocator) void {
         self.stack = stack_type.init(alloc);
     }
 
-    pub fn push(self: *@This(), img: t.AllocatedImage) void {
+    pub fn push(self: *@This(), img: t.AllocatedImageAndView) void {
         self.stack.append(img) catch @panic("failed to append to deletion stack");
     }
 
-    pub fn flush(self: *@This(), alloc: c.VmaAllocator) void {
+    pub fn flush(self: *@This(),device:c.VkDevice, alloc: c.VmaAllocator ,cbs: ?*c.VkAllocationCallbacks) void {
         while (self.stack.popOrNull()) |entry| {
+            c.vkDestroyImageView(device,entry.view ,cbs );
             c.vmaDestroyImage(alloc, entry.image, entry.allocation);
         }
     }
 
-    pub fn deinit(self: *@This(), alloc: c.VmaAllocator) void {
-        self.flush(alloc);
+    pub fn deinit(self: *@This(),device:c.VkDevice, alloc: c.VmaAllocator ,cbs: ?*c.VkAllocationCallbacks) void {
+        self.flush(device,alloc,cbs);
         self.stack.deinit();
     }
 };
@@ -878,6 +879,32 @@ pub const ImageViewDeletionStack = struct {
     pub fn flush(self: *@This(), device: c.VkDevice, cbs: ?*c.VkAllocationCallbacks) void {
         while (self.stack.popOrNull()) |entry| {
             c.vkDestroyImageView(device, entry, cbs);
+        }
+    }
+
+    pub fn deinit(self: *@This(), device: c.VkDevice, cbs: ?*c.VkAllocationCallbacks) void {
+        self.flush(device, cbs);
+        self.stack.deinit();
+    }
+};
+
+
+
+pub const SamplerDeletionStack = struct {
+    const stack_type = std.ArrayList(c.VkSampler);
+    stack: stack_type = undefined,
+
+    pub fn init(self: *@This(), alloc: std.mem.Allocator) void {
+        self.stack = stack_type.init(alloc);
+    }
+
+    pub fn push(self: *@This(), pip: c.VkSampler) void {
+        self.stack.append(pip) catch @panic("failed to append to deletion stack");
+    }
+
+    pub fn flush(self: *@This(), device: c.VkDevice, cbs: ?*c.VkAllocationCallbacks) void {
+        while (self.stack.popOrNull()) |entry| {
+            c.vkDestroySampler(device, entry, cbs);
         }
     }
 

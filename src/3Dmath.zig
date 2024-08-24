@@ -119,6 +119,26 @@ pub const Vec4 = extern struct {
     pub inline fn dot(a: Self, b: Self) f32 {
         return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
     }
+
+    pub fn packU8(self: Vec4) u32 {
+        const r8g8b8a8 = packed struct {
+            x: u8,
+            y: u8,
+            z: u8,
+            w: u8,
+        };
+        const u32union = packed union {
+            parts: r8g8b8a8,
+            int: u32,
+        };
+        const packedU8 = u32union{ .parts = r8g8b8a8{
+            .x = @intFromFloat(@round(std.math.clamp(self.x, 0, 1) * 255.0)),
+            .y = @intFromFloat(@round(std.math.clamp(self.y, 0, 1) * 255.0)),
+            .z = @intFromFloat(@round(std.math.clamp(self.z, 0, 1) * 255.0)),
+            .w = @intFromFloat(@round(std.math.clamp(self.w, 0, 1) * 255.0)),
+        } };
+        return packedU8.int;
+    }
 };
 
 pub const Mat4 = extern struct {
