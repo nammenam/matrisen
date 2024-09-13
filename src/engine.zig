@@ -25,6 +25,109 @@ const background_color_dark: t.ComputePushConstants = .{
 };
 const FRAME_OVERLAP = 2;
 const render_scale = 1.0;
+const GLTFMetallicRoughness = struct {
+    opaque_pipeline: t.MaterialPipeline,
+    transparent_pipeline: t.MaterialPipeline,
+    materiallayout: c.VkDescriptorSetLayout,
+    writer: d.DescriptorWriter,
+
+    const MaterialConstants = struct { colorfactors: m.Vec4, metalrough_factors: m.Vec4, padding: [14]m.Vec4 };
+
+    const MaterialResources = struct { colorimage: t.AllocatedImageAndView, colorsampler: c.VkSampler, metalroughimage: t.AllocatedImageAndView, metalroughsampler: c.VkSampler, databuffer: c.VkBuffer, databuffer_offset: u32 };
+
+    pub fn build_pipelines(self: *@This(), engine: *Self) void {
+
+        const vertex_code align(4) = @embedFile("mesh.vert").*;
+        const fragment_code align(4) = @embedFile("mesh.frag").*;
+
+        const vertex_module = vki.create_shader_module(self.device, &vertex_code, vk_alloc_cbs) orelse null;
+        const fragment_module = vki.create_shader_module(self.device, &fragment_code, vk_alloc_cbs) orelse null;
+        if (vertex_module != null) log.info("Created vertex shader module", .{});
+        if (fragment_module != null) log.info("Created fragment shader module", .{});
+
+        defer c.vkDestroyShaderModule(self.device, vertex_module, vk_alloc_cbs);
+        defer c.vkDestroyShaderModule(self.device, fragment_module, vk_alloc_cbs);
+
+        const matrixrange = c.VkPushConstantRange{
+            .offset = 0,
+            .size = @sizeOf(t.GPUDrawPushConstants),
+            .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT
+        };
+
+        var layout_builder = d.DescriptorLayoutBuilder{};
+        layout_builder.init(engine.cpu_allocator);
+        layout_builder.add_binding(0, c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        layout_builder.add_binding(1, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        layout_builder.add_binding(2, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+
+        self.materiallayout = layout_builder.build(engine.device, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT);
+
+        const layouts = [_]c.VkDescriptorSetLayout{ engine.gpuSceneDataDescriptorLayout, self.materialLayout };
+
+        const mesh_layout_info = c.VKPipelineLayoutCreateInfo{
+            .setLayoutCount = 2,
+            .pSetLayouts = &layouts,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &matrixrange,
+        };
+
+        var newlayout: c.VkPipelineLayout = undefined;
+
+        check_vk(c.vkCreatePipelineLayout(engine.device, &mesh_layout_info, null, &newlayout)) catch @panic("Failed to create pipeline layout");
+
+        self.opaque_pipeline.layout = newlayout;
+        self.transparent_pipeline.layout = newlayout;
+
+        var pipelineBuilder = PipelineBuilder.init();
+        pipelineBuilder.set_shaders(vertex_module, fragment_module);
+        pipelineBuilder.set_input_topology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+        pipelineBuilder.set_polygon_mode(c.VK_POLYGON_MODE_FILL);
+        pipelineBuilder.set_cull_mode(c.VK_CULL_MODE_NONE, c.VK_FRONT_FACE_CLOCKWISE);
+        pipelineBuilder.set_multisampling_none();
+        pipelineBuilder.disable_blending();
+        pipelineBuilder.enable_depthtest(true, c.VK_COMPARE_OP_GREATER_OR_EQUAL);
+
+        pipelineBuilder.set_color_attachment_format(engine.draw_image_format);
+        pipelineBuilder.set_depth_format(engine.depth_image_format);
+
+        pipelineBuilder.pipeline_layout = newlayout;
+
+        self.opaque_pipeline.pipeline = pipelineBuilder.build_pipeline(engine.device);
+
+        pipelineBuilder.enable_blending_additive();
+        pipelineBuilder.enable_depthtest(false, .greater_or_equal);
+
+        self.transparent_pipeline.pipeline = pipelineBuilder.build_pipeline(engine.device);
+    }
+
+    fn clear_resources(device: c.VkDevice) void {}
+
+    fn write_material(self: *@This(), device: c.VkDevice, pass: t.MaterialPass, resources: MaterialResources, descriptor_allocator: *d.DescriptorAllocatorGrowable) t.MaterialInstance {
+        const matdata = t.MaterialInstance;
+        matdata.passtype = pass;
+        if (pass == t.MaterialPass.Transparent) {
+        matdata.pipeline = &self.transparent_pipeline;
+        }
+        else {
+        matdata.pipeline = &self.opaque_pipeline;
+        }
+
+        matdata.materialset = descriptor_allocator.allocate(device, self.materiallayout);
+
+
+        self.writer.clear();
+        self.writer.write_buffer(0, resources.dataBuffer, @sizeOf(MaterialConstants), resources.dataBufferOffset, c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        self.writer.write_image(1, resources.colorImage.imageView, resources.colorSampler, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        self.writer.write_image(2, resources.metalRoughImage.imageView, resources.metalRoughSampler, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+
+        self.writer.update_set(device, matdata.materialSet);
+
+        return matdata;
+    }
+};
+
+
+
 const Self = @This();
 
 resize_request: bool = false,

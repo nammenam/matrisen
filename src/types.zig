@@ -5,6 +5,32 @@ const BufferDeletionStack = @import("vulkanutils.zig").BufferDeletionStack;
 const c = @import("clibs.zig");
 const Gltf = @import("assetloader.zig");
 
+pub const RenderObject = struct {
+    indexcount : u32,
+    firstindex : u32,
+    indexbuffer : c.VkBuffer,
+    material : *MaterialInstance,
+    transform : m.Mat4,
+    vertex_buffer_address : c.VkDeviceAddress
+};
+
+pub const MaterialInstance = struct {
+    pipeline : *MaterialPipeline,
+    materialset : c.VkDescriptorSet,
+    passtype : MaterialPass
+};
+
+pub const MaterialPass = enum {
+    MainColor,
+    Transparent,
+    Other
+};
+
+pub const MaterialPipeline = struct {
+    pipeline : c.VkPipeline,
+    layout : c.VkPipelineLayout  
+};
+
 pub const AllocatedBuffer = struct {
     buffer: c.VkBuffer,
     allocation: c.VmaAllocation,
