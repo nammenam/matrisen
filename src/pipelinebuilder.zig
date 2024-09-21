@@ -157,7 +157,7 @@ pub fn set_depth_format(self: *Self, format: c.VkFormat) void {
     self.render_info.depthAttachmentFormat = format;
 }
 
-pub fn disable_depth_test(self: *Self) void {
+pub fn disable_depthtest(self: *Self) void {
     self.depth_stencil.depthTestEnable = c.VK_FALSE;
     self.depth_stencil.depthWriteEnable = c.VK_FALSE;
     self.depth_stencil.depthCompareOp = c.VK_COMPARE_OP_NEVER;
@@ -169,7 +169,7 @@ pub fn disable_depth_test(self: *Self) void {
     self.depth_stencil.back = std.mem.zeroInit(c.VkStencilOpState, .{});
 }
 
-pub fn enable_depth_test(self: *Self, depthwrite_enable : bool, op : c.VkCompareOp) void {
+pub fn enable_depthtest(self: *Self, depthwrite_enable : bool, op : c.VkCompareOp) void {
     self.depth_stencil.depthTestEnable = c.VK_TRUE;
     self.depth_stencil.depthWriteEnable = if (depthwrite_enable) c.VK_TRUE else c.VK_FALSE;
     self.depth_stencil.depthCompareOp = op;

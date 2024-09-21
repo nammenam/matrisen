@@ -26,27 +26,40 @@ const background_color_dark: t.ComputePushConstants = .{
 const FRAME_OVERLAP = 2;
 const render_scale = 1.0;
 const GLTFMetallicRoughness = struct {
-    opaque_pipeline: t.MaterialPipeline,
-    transparent_pipeline: t.MaterialPipeline,
-    materiallayout: c.VkDescriptorSetLayout,
+    opaque_pipeline: t.MaterialPipeline = undefined,
+    transparent_pipeline: t.MaterialPipeline = undefined,
+    materiallayout: c.VkDescriptorSetLayout = undefined,
     writer: d.DescriptorWriter,
 
     const MaterialConstants = struct { colorfactors: m.Vec4, metalrough_factors: m.Vec4, padding: [14]m.Vec4 };
 
-    const MaterialResources = struct { colorimage: t.AllocatedImageAndView, colorsampler: c.VkSampler, metalroughimage: t.AllocatedImageAndView, metalroughsampler: c.VkSampler, databuffer: c.VkBuffer, databuffer_offset: u32 };
+    const MaterialResources = struct { 
+        colorimage: t.AllocatedImageAndView = undefined, 
+        colorsampler: c.VkSampler = undefined, 
+        metalroughimage: t.AllocatedImageAndView = undefined, 
+        metalroughsampler: c.VkSampler = undefined, 
+        databuffer: c.VkBuffer = undefined, 
+        databuffer_offset: u32 = undefined, 
+    };
+
+    pub fn init(alloc:std.mem.Allocator) @This() {
+        return .{
+            .writer = d.DescriptorWriter.init(alloc)  
+        };
+    }
 
     pub fn build_pipelines(self: *@This(), engine: *Self) void {
 
         const vertex_code align(4) = @embedFile("mesh.vert").*;
         const fragment_code align(4) = @embedFile("mesh.frag").*;
 
-        const vertex_module = vki.create_shader_module(self.device, &vertex_code, vk_alloc_cbs) orelse null;
-        const fragment_module = vki.create_shader_module(self.device, &fragment_code, vk_alloc_cbs) orelse null;
+        const vertex_module = vki.create_shader_module(engine.device, &vertex_code, vk_alloc_cbs) orelse null;
+        const fragment_module = vki.create_shader_module(engine.device, &fragment_code, vk_alloc_cbs) orelse null;
         if (vertex_module != null) log.info("Created vertex shader module", .{});
         if (fragment_module != null) log.info("Created fragment shader module", .{});
 
-        defer c.vkDestroyShaderModule(self.device, vertex_module, vk_alloc_cbs);
-        defer c.vkDestroyShaderModule(self.device, fragment_module, vk_alloc_cbs);
+        defer c.vkDestroyShaderModule(engine.device, vertex_module, vk_alloc_cbs);
+        defer c.vkDestroyShaderModule(engine.device, fragment_module, vk_alloc_cbs);
 
         const matrixrange = c.VkPushConstantRange{
             .offset = 0,
@@ -60,11 +73,13 @@ const GLTFMetallicRoughness = struct {
         layout_builder.add_binding(1, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         layout_builder.add_binding(2, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
-        self.materiallayout = layout_builder.build(engine.device, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT);
+        self.materiallayout = layout_builder.build(engine.device, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, null,0);
 
-        const layouts = [_]c.VkDescriptorSetLayout{ engine.gpuSceneDataDescriptorLayout, self.materialLayout };
+        const layouts = [_]c.VkDescriptorSetLayout{ engine.gpu_scene_data_descriptor_layout, self.materiallayout };
 
-        const mesh_layout_info = c.VKPipelineLayoutCreateInfo{
+        const mesh_layout_info = c.VkPipelineLayoutCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .flags = 0,
             .setLayoutCount = 2,
             .pSetLayouts = &layouts,
             .pushConstantRangeCount = 1,
@@ -78,7 +93,7 @@ const GLTFMetallicRoughness = struct {
         self.opaque_pipeline.layout = newlayout;
         self.transparent_pipeline.layout = newlayout;
 
-        var pipelineBuilder = PipelineBuilder.init();
+        var pipelineBuilder = PipelineBuilder.init(engine.cpu_allocator);
         pipelineBuilder.set_shaders(vertex_module, fragment_module);
         pipelineBuilder.set_input_topology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
         pipelineBuilder.set_polygon_mode(c.VK_POLYGON_MODE_FILL);
@@ -95,15 +110,20 @@ const GLTFMetallicRoughness = struct {
         self.opaque_pipeline.pipeline = pipelineBuilder.build_pipeline(engine.device);
 
         pipelineBuilder.enable_blending_additive();
-        pipelineBuilder.enable_depthtest(false, .greater_or_equal);
+        pipelineBuilder.enable_depthtest(false, c.VK_COMPARE_OP_GREATER_OR_EQUAL);
 
         self.transparent_pipeline.pipeline = pipelineBuilder.build_pipeline(engine.device);
     }
 
-    fn clear_resources(device: c.VkDevice) void {}
+    fn clear_resources(self: *@This(), device: c.VkDevice) void {
+        c.vkDestroyDescriptorSetLayout(device,self.materiallayout ,null );
+        c.vkDestroyPipelineLayout(device,self.transparent_pipeline.layout ,null );
+        c.vkDestroyPipeline(device,self.transparent_pipeline.pipeline ,null );
+        c.vkDestroyPipeline(device,self.opaque_pipeline.pipeline ,null );
+    }
 
     fn write_material(self: *@This(), device: c.VkDevice, pass: t.MaterialPass, resources: MaterialResources, descriptor_allocator: *d.DescriptorAllocatorGrowable) t.MaterialInstance {
-        const matdata = t.MaterialInstance;
+        var matdata = t.MaterialInstance{};
         matdata.passtype = pass;
         if (pass == t.MaterialPass.Transparent) {
         matdata.pipeline = &self.transparent_pipeline;
@@ -112,15 +132,15 @@ const GLTFMetallicRoughness = struct {
         matdata.pipeline = &self.opaque_pipeline;
         }
 
-        matdata.materialset = descriptor_allocator.allocate(device, self.materiallayout);
+        matdata.materialset = descriptor_allocator.allocate(device, self.materiallayout, null);
 
 
         self.writer.clear();
-        self.writer.write_buffer(0, resources.dataBuffer, @sizeOf(MaterialConstants), resources.dataBufferOffset, c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-        self.writer.write_image(1, resources.colorImage.imageView, resources.colorSampler, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        self.writer.write_image(2, resources.metalRoughImage.imageView, resources.metalRoughSampler, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        self.writer.write_buffer(0, resources.databuffer, @sizeOf(MaterialConstants), resources.databuffer_offset, c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        self.writer.write_image(1, resources.colorimage.view, resources.colorsampler, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        self.writer.write_image(2, resources.metalroughimage.view, resources.metalroughsampler, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
-        self.writer.update_set(device, matdata.materialSet);
+        self.writer.update_set(device, matdata.materialset);
 
         return matdata;
     }
@@ -174,7 +194,7 @@ immidiate_command_pool: c.VkCommandPool = null,
 frames: [FRAME_OVERLAP]t.FrameData = .{t.FrameData{}} ** FRAME_OVERLAP,
 frame_number: u32 = 0,
 // descriptors
-global_descriptor_allocator: d.DescriptorAllocator = undefined,
+global_descriptor_allocator: d.DescriptorAllocatorGrowable = undefined,
 draw_image_descriptors: c.VkDescriptorSet = undefined,
 draw_image_descriptor_layout: c.VkDescriptorSetLayout = undefined,
 gradient_pipeline_layout: c.VkPipelineLayout = null,
@@ -193,6 +213,8 @@ error_checkerboard_image: t.AllocatedImageAndView = undefined,
 default_sampler_linear: c.VkSampler = undefined,
 default_sampler_nearest: c.VkSampler = undefined,
 rectangle: t.GPUMeshBuffers = undefined,
+defaultdata : t.MaterialInstance = undefined,
+metalroughmaterial: GLTFMetallicRoughness,
 suzanne: std.ArrayList(t.MeshAsset),
 scene_data: t.GPUSceneData = undefined,
 lua_state: ?*c.lua_State,
@@ -210,6 +232,7 @@ pub fn init(a: std.mem.Allocator) Self {
         .cpu_allocator = a,
         .suzanne = std.ArrayList(t.MeshAsset).init(a),
         .lua_state = c.luaL_newstate(),
+        .metalroughmaterial = GLTFMetallicRoughness.init(a),
     };
     engine.buffer_deletion_queue.init(a);
     engine.image_deletion_queue.init(a);
@@ -233,8 +256,8 @@ pub fn init(a: std.mem.Allocator) Self {
     engine.init_commands();
     engine.init_sync_structures();
     engine.init_descriptors();
-    engine.init_default_data();
     engine.init_pipelines();
+    engine.init_default_data();
     c.luaL_openlibs(engine.lua_state);
     _ = c.SDL_ShowWindow(engine.window.sdl_window);
     return engine;
@@ -313,8 +336,7 @@ pub fn cleanup(self: *Self) void {
     c.vkDestroyDescriptorSetLayout(self.device, self.draw_image_descriptor_layout, vk_alloc_cbs);
     c.vkDestroyDescriptorSetLayout(self.device, self.gpu_scene_data_descriptor_layout, vk_alloc_cbs);
     c.vkDestroyDescriptorSetLayout(self.device, self.single_image_descriptor_layout, vk_alloc_cbs);
-    self.global_descriptor_allocator.clear_descriptors(self.device);
-    self.global_descriptor_allocator.destroy_pool(self.device);
+    self.global_descriptor_allocator.deinit(self.device);
     for (&self.frames) |*frame| {
         frame.buffer_deletion_queue.deinit(self.gpu_allocator);
         c.vkDestroyCommandPool(self.device, frame.command_pool, vk_alloc_cbs);
@@ -509,8 +531,7 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
 
     const global_descriptor = frame.frame_descriptors.allocate(self.device, self.gpu_scene_data_descriptor_layout, null);
     {
-        var writer = d.DescriptorWriter{};
-        writer.init(self.cpu_allocator);
+        var writer = d.DescriptorWriter.init(self.cpu_allocator);
         defer writer.deinit();
         writer.write_buffer(0, gpu_scene_data_buffer.buffer, @sizeOf(t.GPUSceneData), 0, c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
         writer.update_set(self.device, global_descriptor);
@@ -529,8 +550,7 @@ fn draw_geometry(self: *Self, cmd: c.VkCommandBuffer) void {
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.mesh_pipeline);
     const image_set = self.get_current_frame().frame_descriptors.allocate(self.device, self.single_image_descriptor_layout, null);
     {
-        var writer = d.DescriptorWriter{};
-        writer.init(self.cpu_allocator);
+        var writer = d.DescriptorWriter.init(self.cpu_allocator);
         defer writer.deinit();
         writer.write_image(0, self.error_checkerboard_image.view, self.default_sampler_nearest, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         writer.update_set(self.device, image_set);
@@ -840,15 +860,32 @@ fn init_default_data(self: *Self) void {
     self.image_deletion_queue.push(self.black_image);
     self.image_deletion_queue.push(self.error_checkerboard_image);
 
+    var materialresources = GLTFMetallicRoughness.MaterialResources{};
+    materialresources.colorimage = self.white_image;
+    materialresources.colorsampler = self.default_sampler_linear;
+    materialresources.metalroughimage = self.white_image;
+    materialresources.metalroughsampler = self.default_sampler_linear;
+
+    const materialconstants = self.create_buffer(@sizeOf(GLTFMetallicRoughness.MaterialConstants),c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT ,c.VMA_MEMORY_USAGE_CPU_TO_GPU);
+    self.buffer_deletion_queue.push(materialconstants);
+
+    var sceneuniformdata = @as(*GLTFMetallicRoughness.MaterialConstants, @alignCast(@ptrCast(materialconstants.info.pMappedData.?)));
+    sceneuniformdata.colorfactors = m.Vec4{.x =1,.y = 1,.z = 1,.w = 1};
+    sceneuniformdata.metalrough_factors = m.Vec4{.x = 1,.y = 0.5,.z = 1,.w = 1};
+    materialresources.databuffer = materialconstants.buffer;
+    materialresources.databuffer_offset = 0;
+    self.defaultdata = self.metalroughmaterial.write_material(self.device,t.MaterialPass.MainColor ,materialresources ,&self.global_descriptor_allocator);
+
     std.log.info("Initialized default data", .{});
 }
 
 fn init_descriptors(self: *Self) void {
-    var sizes = [_]d.DescriptorAllocator.PoolSizeRatio{
-        .{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .ratio = 10 },
+    var sizes = [_]d.DescriptorAllocatorGrowable.PoolSizeRatio{
+        .{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .ratio = 1 },
+        .{ .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .ratio = 1},
     };
 
-    self.global_descriptor_allocator.init_pool(self.device, 10, &sizes, self.cpu_allocator);
+    self.global_descriptor_allocator.init(self.device, 10, &sizes, self.cpu_allocator);
 
     {
         var builder = d.DescriptorLayoutBuilder{};
@@ -872,10 +909,9 @@ fn init_descriptors(self: *Self) void {
         self.single_image_descriptor_layout = builder.build(self.device, c.VK_SHADER_STAGE_FRAGMENT_BIT, null, 0);
     }
 
-    self.draw_image_descriptors = self.global_descriptor_allocator.allocate(self.device, self.draw_image_descriptor_layout);
+    self.draw_image_descriptors = self.global_descriptor_allocator.allocate(self.device, self.draw_image_descriptor_layout, null);
 
-    var writer = d.DescriptorWriter{};
-    writer.init(self.cpu_allocator);
+    var writer = d.DescriptorWriter.init(self.cpu_allocator);
     defer writer.deinit();
     writer.write_image(0, self.draw_image.view, null, c.VK_IMAGE_LAYOUT_GENERAL, c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
     writer.update_set(self.device, self.draw_image_descriptors);
@@ -1134,6 +1170,7 @@ fn init_sync_structures(self: *Self) void {
 fn init_pipelines(self: *Self) void {
     init_background_pipelines(self);
     init_mesh_pipeline(self);
+    self.metalroughmaterial.build_pipelines(self);
 }
 
 fn init_mesh_pipeline(self: *Self) void {
@@ -1170,8 +1207,8 @@ fn init_mesh_pipeline(self: *Self) void {
     pipeline_builder.disable_blending();
     // pipeline_builder.enable_blending_additive();
     // pipeline_builder.enable_blending_alpha();
-    // pipeline_builder.disable_depth_test();
-    pipeline_builder.enable_depth_test(true, c.VK_COMPARE_OP_GREATER_OR_EQUAL);
+    // pipeline_builder.disable_depthtest();
+    pipeline_builder.enable_depthtest(true, c.VK_COMPARE_OP_GREATER_OR_EQUAL);
     pipeline_builder.set_color_attachment_format(self.draw_image_format);
     pipeline_builder.set_depth_format(self.depth_image_format);
     self.mesh_pipeline = pipeline_builder.build_pipeline(self.device);

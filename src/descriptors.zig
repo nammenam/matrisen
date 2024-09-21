@@ -211,10 +211,12 @@ pub const DescriptorWriter = struct {
     buffer_infos: std.ArrayList(c.VkDescriptorBufferInfo) = undefined,
     image_infos: std.ArrayList(c.VkDescriptorImageInfo) = undefined,
 
-    pub fn init(self: *DescriptorWriter, allocator: std.mem.Allocator) void {
-        self.writes = std.ArrayList(c.VkWriteDescriptorSet).init(allocator);
-        self.buffer_infos = std.ArrayList(c.VkDescriptorBufferInfo).init(allocator);
-        self.image_infos = std.ArrayList(c.VkDescriptorImageInfo).init(allocator);
+    pub fn init(allocator: std.mem.Allocator) @This() {
+        return .{
+            .writes = std.ArrayList(c.VkWriteDescriptorSet).init(allocator),
+            .buffer_infos = std.ArrayList(c.VkDescriptorBufferInfo).init(allocator),
+            .image_infos = std.ArrayList(c.VkDescriptorImageInfo).init(allocator),
+        };
     }
 
     pub fn deinit(self: *@This()) void {

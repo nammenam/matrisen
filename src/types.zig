@@ -15,9 +15,9 @@ pub const RenderObject = struct {
 };
 
 pub const MaterialInstance = struct {
-    pipeline : *MaterialPipeline,
-    materialset : c.VkDescriptorSet,
-    passtype : MaterialPass
+    pipeline : *MaterialPipeline = undefined,
+    materialset : c.VkDescriptorSet = undefined,
+    passtype : MaterialPass = undefined,
 };
 
 pub const MaterialPass = enum {

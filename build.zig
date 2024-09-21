@@ -66,18 +66,18 @@ fn compile_all_shaders(b: *std.Build, exe: *std.Build.Step.Compile) void {
     while (file_it.next() catch @panic("failed to iterate shader directory")) |entry| {
         if (entry.kind == .file) {
             const ext = std.fs.path.extension(entry.name);
-            if (std.mem.eql(u8, ext, ".glsl")) {
+            if (!std.mem.eql(u8,ext,".glsl"))  {
                 const basename = std.fs.path.basename(entry.name);
                 const name = basename[0 .. basename.len - ext.len];
                 std.debug.print("found shader file to compile: {s}. compiling with name: {s}\n", .{ entry.name, name });
-                add_shader(b, exe, name);
+                add_shader(b, exe, basename);
             }
         }
     }
 }
 
 fn add_shader(b: *std.Build, exe: *std.Build.Step.Compile, name: []const u8) void {
-    const source = std.fmt.allocPrint(b.allocator, "shaders/{s}.glsl", .{name}) catch @panic("OOM");
+    const source = std.fmt.allocPrint(b.allocator, "shaders/{s}", .{name}) catch @panic("OOM");
     const outpath = std.fmt.allocPrint(b.allocator, "shaders/{s}.spv", .{name}) catch @panic("OOM");
 
     const shader_compilation = b.addSystemCommand(&.{"glslangValidator"});
