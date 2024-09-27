@@ -69,6 +69,7 @@ const GLTFMetallicRoughness = struct {
 
         var layout_builder = d.DescriptorLayoutBuilder{};
         layout_builder.init(engine.cpu_allocator);
+        defer layout_builder.deinit();
         layout_builder.add_binding(0, c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
         layout_builder.add_binding(1, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         layout_builder.add_binding(2, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
@@ -94,6 +95,7 @@ const GLTFMetallicRoughness = struct {
         self.transparent_pipeline.layout = newlayout;
 
         var pipelineBuilder = PipelineBuilder.init(engine.cpu_allocator);
+        defer pipelineBuilder.deinit();
         pipelineBuilder.set_shaders(vertex_module, fragment_module);
         pipelineBuilder.set_input_topology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
         pipelineBuilder.set_polygon_mode(c.VK_POLYGON_MODE_FILL);
@@ -120,6 +122,7 @@ const GLTFMetallicRoughness = struct {
         c.vkDestroyPipelineLayout(device,self.transparent_pipeline.layout ,null );
         c.vkDestroyPipeline(device,self.transparent_pipeline.pipeline ,null );
         c.vkDestroyPipeline(device,self.opaque_pipeline.pipeline ,null );
+        self.writer.deinit();
     }
 
     fn write_material(self: *@This(), device: c.VkDevice, pass: t.MaterialPass, resources: MaterialResources, descriptor_allocator: *d.DescriptorAllocatorGrowable) t.MaterialInstance {
@@ -332,6 +335,7 @@ pub fn cleanup(self: *Self) void {
     self.pipeline_deletion_queue.deinit(self.device, vk_alloc_cbs);
     self.pipeline_layout_deletion_queue.deinit(self.device, vk_alloc_cbs);
     self.sampler_deletion_queue.deinit(self.device, vk_alloc_cbs);
+    self.metalroughmaterial.clear_resources(self.device);
 
     c.vkDestroyDescriptorSetLayout(self.device, self.draw_image_descriptor_layout, vk_alloc_cbs);
     c.vkDestroyDescriptorSetLayout(self.device, self.gpu_scene_data_descriptor_layout, vk_alloc_cbs);
@@ -890,21 +894,21 @@ fn init_descriptors(self: *Self) void {
     {
         var builder = d.DescriptorLayoutBuilder{};
         builder.init(self.cpu_allocator);
-        defer builder.bindings.deinit();
+        defer builder.deinit();
         builder.add_binding(0, c.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
         self.draw_image_descriptor_layout = builder.build(self.device, c.VK_SHADER_STAGE_COMPUTE_BIT, null, 0);
     }
     {
         var builder = d.DescriptorLayoutBuilder{};
         builder.init(self.cpu_allocator);
-        defer builder.bindings.deinit();
+        defer builder.deinit();
         builder.add_binding(0, c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
         self.gpu_scene_data_descriptor_layout = builder.build(self.device, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, null, 0);
     }
     {
         var builder = d.DescriptorLayoutBuilder{};
         builder.init(self.cpu_allocator);
-        defer builder.bindings.deinit();
+        defer builder.deinit();
         builder.add_binding(0, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         self.single_image_descriptor_layout = builder.build(self.device, c.VK_SHADER_STAGE_FRAGMENT_BIT, null, 0);
     }

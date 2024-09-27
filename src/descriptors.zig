@@ -10,6 +10,10 @@ pub const DescriptorLayoutBuilder = struct {
         self.bindings = std.ArrayList(c.VkDescriptorSetLayoutBinding).init(alloc);
     }
 
+    pub fn deinit(self: *Self) void {
+        self.bindings.deinit();
+    }
+
     pub fn add_binding(self: *Self, binding: u32, descriptor_type: c.VkDescriptorType) void {
         const new_binding = std.mem.zeroInit(c.VkDescriptorSetLayoutBinding, .{
             .binding = binding,
