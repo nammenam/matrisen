@@ -2,7 +2,7 @@
     .fingerprint = 0xb2b56c17b118ac8a,
     .name = .matrisen,
     .version = "0.0.1",
-    .minimum_zig_version = "0.14.0-dev.3460+6d29ef0ba",
+    .minimum_zig_version = "0.15.1",
     .dependencies = .{},
     .paths = .{
         "build.zig",

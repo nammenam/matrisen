@@ -18,3 +18,6 @@ useful graphics in useful formats for plotting, illustrating and animation tasks
 ├─ LICENSE
 └─ README.md
 ```
+
+![](docs/Screenshot.png)
+

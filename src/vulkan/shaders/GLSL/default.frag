@@ -46,5 +46,6 @@ layout(location = 0) out vec4 outFragColor;
 void main()
 {
     vec3 color = inColor;
+    vec3 normal = inNormal;
     outFragColor = vec4(color, 1.0);
 }
