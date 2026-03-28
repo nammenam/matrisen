@@ -34,9 +34,6 @@ pub fn loop(self: *App, engine: *Core, window: *m.Window) void {
         if (window.state.e) camerapos.translateWorldZ(0.1);
         camerarot.rotatePitch(-window.state.mouse_y / 150);
         camerarot.rotateWorldZ(-window.state.mouse_x / 150);
-        if (engine.framenumber % 100 == 0) {
-            log.info("FPS: {d}                        \x1b[1A", .{@as(u32, @intFromFloat(time))});
-        }
         engine.updateScene(camerarot, camerapos, time);
         engine.nextFrame(window);
         time += @as(f32, @floatFromInt(delta)) / 100_000;
