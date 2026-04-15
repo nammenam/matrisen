@@ -27,3 +27,12 @@ useful graphics in useful formats for plotting, illustrating and animation tasks
 [ ] 2d/ui shader
 
 ![](docs/Screenshot.png)
+
+
+
+
+TODO
+fix buffermanager
+fix draw indirect so we can use gpu to issue draw calls
+finish designing universal structures
+switch to slang
