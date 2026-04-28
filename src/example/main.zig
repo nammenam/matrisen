@@ -7,8 +7,6 @@ const Vec3 = m.linalg.Vec3(f32);
 const Vec4 = m.linalg.Vec4(f32);
 const Mat4x4 = m.linalg.Mat4x4(f32);
 
-const App = @This();
-
 pub fn loop(self: *App, engine: *Core, window: *m.Window) void {
     window.toggleMouseCapture();
     var timer = std.time.Timer.start() catch @panic("Failed to start timer");
@@ -49,6 +47,22 @@ pub fn main() !void {
     var engine: Core = .init(allocator, &window);
     defer engine.deinit();
     var app: App = .{};
-    // defer app.deinit();
-    app.loop(&engine, &window);
+
+    // 1. Initialize empty GPU buffers
+    engine.buffermanager.initEngineBuffers(&engine, &engine.descriptormanager);
+
+    // 2. Load/Generate meshes and upload them
+    const my_cube_verts = undefined;
+    const my_cube_indices = undefined;
+    const cube_draw_data = engine.buffermanager.uploadMesh(&engine, &my_cube_verts, &my_cube_indices, 0);
+
+    // 3. Write DrawData to the GPU Array (you'd do this for however many instances you want)
+    const draws_ptr = @as(
+        [*]DrawData,
+        @ptrCast(@alignCast(engine.buffermanager.drawbuffer.info.pMappedData.?)),
+    );
+    draws_ptr[0] = cube_draw_data;
+    draws_ptr[1] = cube_draw_data; // Instance 2 of the cube!
+
+    loop(&engine, &window);
 }

@@ -210,34 +210,84 @@ fn setRenderScale(inputextent: c.VkExtent2D, scale: f32) c.VkExtent2D {
 pub fn nextFrame(self: *Self, window: *Window) void {
     var frame = self.framecontexts[self.currentframe];
     const cmd = frame.command_buffer;
-    frame.submitBegin(self) catch |err| {
-        if (err == error.SwapchainOutOfDate or window.state.resizerequest) {
-            self.resize(window);
-            window.state.resizerequest = false;
-            return;
-        }
+
+    // 1. OPEN COMMAND BUFFER
+    frame.beginFrame(self) catch |err| { /* handle resize */ return; };
+
+    const count_offset = @as(u64, self.currentframe) * @sizeOf(u32);
+    const indirect_offset = @as(u64, self.currentframe) * 10000 * @sizeOf(c.VkDrawIndirectCommand);
+    // ==========================================================
+    // 2. RESET COUNT BUFFER
+    // ==========================================================
+    // Fill the 4-byte count buffer with 0 before compute starts
+    c.vkCmdFillBuffer(cmd, self.buffermanager.countbuffer.buffer, count_offset, @sizeOf(u32), 0);
+
+    // Barrier: Ensure FillBuffer is done before the Compute Shader reads/writes it
+    const fill_barrier = c.VkBufferMemoryBarrier{
+        .sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .pNext = null,
+        .srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT | c.VK_ACCESS_SHADER_WRITE_BIT,
+        .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+        .buffer = self.buffermanager.countbuffer.buffer,
+        .offset = 0,
+        .size = @sizeOf(u32),
     };
+    c.vkCmdPipelineBarrier(
+        cmd, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, null, 1, &fill_barrier, 0, null,
+    );
+
+    // ==========================================================
+    // 3. COMPUTE PASS (Culling)
+    // ==========================================================
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.computepipeline);
+    c.vkCmdBindDescriptorSets(
+        cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.computepipelinelayout,
+        0, 1, &self.descriptormanager.dynamicsets[self.currentframe], 0, null,
+    );
+    c.vkCmdDispatch(cmd, 1, 1, 1); // Dispatch threads based on object count
+
+    // ==========================================================
+    // 4. MEMORY BARRIER (Block graphics until compute is done)
+    // ==========================================================
+    // We use a global memory barrier here to cover BOTH the indirect buffer and count buffer easily
+    const compute_to_draw_barrier = c.VkMemoryBarrier{
+        .sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .pNext = null,
+        .srcAccessMask = c.VK_ACCESS_SHADER_WRITE_BIT,
+        .dstAccessMask = c.VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+    };
+    c.vkCmdPipelineBarrier(
+        cmd, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+        0, 1, &compute_to_draw_barrier, 0, null, 0, null,
+    );
+
+    // ==========================================================
+    // 5. GRAPHICS PASS (Dynamic Rendering)
+    // ==========================================================
+    frame.beginGraphicsPass(self);
+
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.defaultpipeline);
     c.vkCmdBindDescriptorSets(
-        cmd,
-        c.VK_PIPELINE_BIND_POINT_GRAPHICS,
-        self.pipelinemanager.pipelinelayout,
-        0,
-        1,
-        &self.descriptormanager.dynamicsets[self.currentframe],
-        0,
-        null,
+        cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.pipelinelayout,
+        0, 1, &self.descriptormanager.dynamicsets[self.currentframe], 0, null,
     );
-    c.vkCmdDrawIndirect(
+
+    c.vkCmdDrawIndirectCount(
         cmd,
         self.buffermanager.indirectbuffer.buffer,
-        0, // Offset in buffer (start at 0)
-        4, // Becomes gl_DrawID in the shader
-        @sizeOf(c.VkDrawIndirectCommand), // Stride
+        indirect_offset,
+        self.buffermanager.countbuffer.buffer,
+        count_offset,
+        10000,
+        @sizeOf(c.VkDrawIndirectCommand),
     );
-    // c.vkCmdDraw(cmd, 3, 1, 0, 0);
-    // 4. Submit
-    frame.submitEnd(self);
+    frame.endGraphicsPass(self);
+
+    // 6. CLOSE & SUBMIT
+    frame.endFrame(self);
     self.framenumber +%= 1;
     self.switch_frame();
 }

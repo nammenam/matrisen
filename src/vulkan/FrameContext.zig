@@ -66,9 +66,13 @@ pub fn deinit(self: *Self, device: Device, allocationcallbacks: ?*c.VkAllocation
     c.vkDestroySemaphore(device.handle, self.acquiresemaphore, allocationcallbacks);
 }
 
-pub fn submitBegin(self: *Self, core: *Core) !void {
-    const timeout: u64 = 4_000_000_000; // 4 second in nanonesconds
+pub fn beginFrame(self: *Self, core: *Core) !void {
+    const timeout: u64 = 4_000_000_000; // 4 seconds
+
+    // Wait for the previous frame to finish
     debug.checkVkPanic(c.vkWaitForFences(core.device.handle, 1, &self.renderfence, c.VK_TRUE, timeout));
+
+    // Acquire the next swapchain image
     const e = c.vkAcquireNextImageKHR(
         core.device.handle,
         core.swapchain.handle,
@@ -81,18 +85,23 @@ pub fn submitBegin(self: *Self, core: *Core) !void {
         return error.SwapchainOutOfDate;
     }
 
+    // Reset fences and command buffer
     debug.checkVkPanic(c.vkResetFences(core.device.handle, 1, &self.renderfence));
     debug.checkVkPanic(c.vkResetCommandBuffer(self.command_buffer, 0));
 
-    const cmd = self.command_buffer;
+    // OPEN COMMAND BUFFER
     const cmd_begin_info: c.VkCommandBufferBeginInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
+    debug.checkVkPanic(c.vkBeginCommandBuffer(self.command_buffer, &cmd_begin_info));
+}
 
-    debug.checkVkPanic(c.vkBeginCommandBuffer(cmd, &cmd_begin_info));
+pub fn beginGraphicsPass(self: *Self, core: *Core) void {
+    const cmd = self.command_buffer;
     const clearvalue = c.VkClearColorValue{ .float32 = .{ 0.014, 0.014, 0.014, 1 } };
 
+    // Transition the render image so we can draw to it
     transitionImage(
         cmd,
         core.renderimage.image,
@@ -111,6 +120,7 @@ pub fn submitBegin(self: *Self, core: *Core) !void {
         .resolveMode = c.VK_RESOLVE_MODE_AVERAGE_BIT,
         .clearValue = .{ .color = clearvalue },
     };
+
     const depth_attachment: c.VkRenderingAttachmentInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .imageView = core.depthimage.view,
@@ -146,14 +156,19 @@ pub fn submitBegin(self: *Self, core: *Core) !void {
         .extent = core.drawextent2d,
     };
 
+    // OPEN RENDER PASS
     c.vkCmdBeginRendering(cmd, &render_info);
     c.vkCmdSetViewport(cmd, 0, 1, &viewport);
     c.vkCmdSetScissor(cmd, 0, 1, &scissor);
 }
 
-pub fn submitEnd(self: *Self, core: *Core) void {
+pub fn endGraphicsPass(self: *Self, core: *Core) void {
     const cmd = self.command_buffer;
+
+    // CLOSE RENDER PASS
     c.vkCmdEndRendering(cmd);
+
+    // Transition render image to be read, and swapchain to be written to
     transitionImage(
         cmd,
         core.renderimage.image,
@@ -166,6 +181,8 @@ pub fn submitEnd(self: *Self, core: *Core) void {
         c.VK_IMAGE_LAYOUT_UNDEFINED,
         c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
     );
+
+    // Blit/Copy the off-screen render image to the actual swapchain image
     copyImageToImage(
         cmd,
         core.renderimage.image,
@@ -173,13 +190,20 @@ pub fn submitEnd(self: *Self, core: *Core) void {
         core.drawextent2d,
         core.swapchain.extent,
     );
+
+    // Transition the swapchain image to a presentable layout
     transitionImage(
         cmd,
         core.swapchain.images[self.swapchainindex],
         c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
     );
+}
 
+pub fn endFrame(self: *Self, core: *Core) void {
+    const cmd = self.command_buffer;
+
+    // CLOSE COMMAND BUFFER
     debug.checkVkPanic(c.vkEndCommandBuffer(cmd));
 
     const cmd_info = c.VkCommandBufferSubmitInfo{
@@ -209,6 +233,7 @@ pub fn submitEnd(self: *Self, core: *Core) void {
         .pSignalSemaphoreInfos = &signal_info,
     };
 
+    // SUBMIT TO GPU
     debug.checkVkPanic(c.vkQueueSubmit2(core.device.graphics_queue, 1, &submit, self.renderfence));
 
     const present_info = c.VkPresentInfoKHR{
@@ -219,6 +244,8 @@ pub fn submitEnd(self: *Self, core: *Core) void {
         .pSwapchains = &core.swapchain.handle,
         .pImageIndices = &self.swapchainindex,
     };
+
+    // PRESENT TO WINDOW
     _ = c.vkQueuePresentKHR(core.device.graphics_queue, &present_info);
 }
 

@@ -85,13 +85,15 @@ pub fn createIndex(core: *Core, size: c.VkDeviceSize) AllocatedBuffer {
     return index_buffer;
 }
 
-pub fn upload(core: *Core, data_slice: []const u8, buffer: AllocatedBuffer) void {
+pub fn upload(core: *Core, data_slice: []const u8, buffer: AllocatedBuffer, dst_offset: c.VkDeviceSize) void {
     const size = data_slice.len;
+
+    // Create staging buffer (CPU visible)
     const staging_buffer = create(
-        core,
+        &core.bufferallocator,
         size,
         c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        c.VMA_MEMORY_USAGE_CPU_ONLY, // Or VMA_MEMORY_USAGE_CPU_TO_GPU
+        c.VMA_MEMORY_USAGE_CPU_ONLY,
     );
     defer c.vmaDestroyBuffer(core.gpuallocator, staging_buffer.buffer, staging_buffer.allocation);
 
@@ -100,42 +102,20 @@ pub fn upload(core: *Core, data_slice: []const u8, buffer: AllocatedBuffer) void
         const staging_slice = byte_data_ptr[0..size];
         @memcpy(staging_slice, data_slice);
     } else {
-        std.log.err("Failed to map staging buffer for SSBO upload.", .{});
+        std.log.err("Failed to map staging buffer.", .{});
         @panic("");
     }
 
+    // Copy from Staging to Giant Buffer at the correct offset
     AsyncContext.submitBegin(core);
     const copy_region = c.VkBufferCopy{
         .srcOffset = 0,
-        .dstOffset = 0,
+        .dstOffset = dst_offset, // <--- Use the offset here!
         .size = size,
     };
     const cmd = core.asynccontext.command_buffer;
     c.vkCmdCopyBuffer(cmd, staging_buffer.buffer, buffer.buffer, 1, &copy_region);
     AsyncContext.submitEnd(core);
-}
-
-pub fn createSSBO(core: *Core, size: c.VkDeviceSize, device_address: bool) AllocatedBuffer {
-    var ssbo_buffer: AllocatedBuffer = undefined;
-    if (device_address) {
-        ssbo_buffer = create(
-            core,
-            size,
-            c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                c.VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-            c.VMA_MEMORY_USAGE_GPU_ONLY, // Optimal for GPU access
-        );
-    } else {
-        ssbo_buffer = create(
-            core,
-            size,
-            c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            c.VMA_MEMORY_USAGE_GPU_ONLY, // Optimal for GPU access
-        );
-    }
-    return ssbo_buffer;
 }
 
 pub fn getBufferAddress(self: *Self, buffer: AllocatedBuffer) c.VkDeviceAddress {
