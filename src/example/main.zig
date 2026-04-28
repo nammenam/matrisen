@@ -7,7 +7,7 @@ const Vec3 = m.linalg.Vec3(f32);
 const Vec4 = m.linalg.Vec4(f32);
 const Mat4x4 = m.linalg.Mat4x4(f32);
 
-pub fn loop(self: *App, engine: *Core, window: *m.Window) void {
+pub fn loop(engine: *Core, window: *m.Window) void {
     window.toggleMouseCapture();
     var timer = std.time.Timer.start() catch @panic("Failed to start timer");
     var delta: u64 = undefined;
@@ -18,7 +18,6 @@ pub fn loop(self: *App, engine: *Core, window: *m.Window) void {
     // camerarot.rotateRoll(std.math.degreesToRadians(180));
     // start
     camerarot.rotatePitch(std.math.degreesToRadians(-90));
-    _ = self;
     // self.initScene(engine);
 
     while (!window.state.quit) {
@@ -46,23 +45,22 @@ pub fn main() !void {
     defer window.deinit();
     var engine: Core = .init(allocator, &window);
     defer engine.deinit();
-    var app: App = .{};
 
     // 1. Initialize empty GPU buffers
-    engine.buffermanager.initEngineBuffers(&engine, &engine.descriptormanager);
+    try engine.buffermanager.initEngineBuffers(&engine, &engine.descriptormanager);
 
     // 2. Load/Generate meshes and upload them
-    const my_cube_verts = undefined;
-    const my_cube_indices = undefined;
-    const cube_draw_data = engine.buffermanager.uploadMesh(&engine, &my_cube_verts, &my_cube_indices, 0);
+    // const my_cube_verts = undefined;
+    // const my_cube_indices = undefined;
+    // const cube_draw_data = engine.buffermanager.uploadMesh(&engine, &my_cube_verts, &my_cube_indices, 0);
 
     // 3. Write DrawData to the GPU Array (you'd do this for however many instances you want)
-    const draws_ptr = @as(
-        [*]DrawData,
-        @ptrCast(@alignCast(engine.buffermanager.drawbuffer.info.pMappedData.?)),
-    );
-    draws_ptr[0] = cube_draw_data;
-    draws_ptr[1] = cube_draw_data; // Instance 2 of the cube!
+    // const draws_ptr = @as(
+    // [*]DrawData,
+    // @ptrCast(@alignCast(engine.buffermanager.drawbuffer.info.pMappedData.?)),
+    // );
+    // draws_ptr[0] = cube_draw_data;
+    // draws_ptr[1] = cube_draw_data; // Instance 2 of the cube!
 
     loop(&engine, &window);
 }

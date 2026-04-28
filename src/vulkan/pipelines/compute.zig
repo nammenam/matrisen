@@ -1,73 +1,41 @@
+const std = @import("std");
+const log = std.log.scoped(.computepipeline);
+const c = @import("../../clibs/clibs.zig").libs;
+const checkVkPanic = @import("../debug.zig").checkVkPanic;
+const PipelineBuilder = @import("../PipelineBuilder.zig");
 
-    {
-        var builder: DescriptorLayoutBuilder = .init(core.cpuallocator);
-        defer builder.deinit();
-        builder.add_binding(0, vk.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-        pipelines.descriptors[5].layout = builder.build(
-            core.device.handle,
-            vk.VK_SHADER_STAGE_COMPUTE_BIT,
-            null,
-            0,
-        );
-    }
+pub fn init(
+    device: c.VkDevice,
+    pipelinelayout: c.VkPipelineLayout,
+    allocationcallbacks: ?*c.VkAllocationCallbacks,
+) c.VkPipeline {
+    // Import the Slang module generated in build.zig
+    const compute_code = @import("main_compute").code_u8;
 
+    const compute_module = PipelineBuilder.createShaderModule(
+        device,
+        compute_code,
+        allocationcallbacks,
+    ) orelse @panic("Failed to create compute shader module");
 
-    pipelines.descriptors[5].sets[0] = core.globaldescriptorallocator.allocate(
-        core.device.handle,
-        pipelines.descriptors[5].layout,
-        null,
-    );
+    log.info("Created compute shader module", .{});
+    defer c.vkDestroyShaderModule(device, compute_module, allocationcallbacks);
 
-    {
-        var writer: Pipelines.Writer = .init(core.cpuallocator);
-        defer writer.deinit();
-        writer.write_image(
-            0,
-            core.images.views[0],
-            null,
-            vk.VK_IMAGE_LAYOUT_GENERAL,
-            vk.VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-        );
-        writer.update_set(core.device.handle, pipelines.descriptors[5].sets[0]);
-    }
+    const shader_stage = c.VkPipelineShaderStageCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = c.VK_SHADER_STAGE_COMPUTE_BIT,
+        .module = compute_module,
+        .pName = "computeMain", // Must match your Slang entry point!
+    };
 
-// fn init_background_pipelines(self: *Self) void {
-//     var compute_layout = std.mem.zeroInit(vk.VkPipelineLayoutCreateInfo, .{
-//         .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-//         .setLayoutCount = 1,
-//         .pSetLayouts = &self.draw_image_descriptor_layout,
-//     });
+    const compute_info = c.VkComputePipelineCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = shader_stage,
+        .layout = pipelinelayout,
+    };
 
-//     const push_constant_range = std.mem.zeroInit(vk.VkPushConstantRange, .{
-//         .stageFlags = vk.VK_SHADER_STAGE_COMPUTE_BIT,
-//         .offset = 0,
-//         .size = @sizeOf(t.ComputePushConstants),
-//     });
+    var pipeline: c.VkPipeline = undefined;
+    checkVkPanic(c.vkCreateComputePipelines(device, null, 1, &compute_info, allocationcallbacks, &pipeline));
 
-//     compute_layout.pPushConstantRanges = &push_constant_range;
-//     compute_layout.pushConstantRangeCount = 1;
-
-//     check_vk(vk.vkCreatePipelineLayout(self.device, &compute_layout, null, &self.gradient_pipeline_layout));
-
-//     const comp_code align(4) = @embedFile("gradient.comp").*;
-//     const comp_module = vki.create_shader_module(self.device, &comp_code, vk_alloc_cbs) orelse null;
-//     if (comp_module != null) log.info("Created compute shader module", .{});
-
-//     const stage_ci = std.mem.zeroInit(vk.VkPipelineShaderStageCreateInfo, .{
-//         .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-//         .stage = vk.VK_SHADER_STAGE_COMPUTE_BIT,
-//         .module = comp_module,
-//         .pName = "main",
-//     });
-
-//     const compute_ci = std.mem.zeroInit(vk.VkComputePipelineCreateInfo, .{
-//         .sType = vk.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-//         .layout = self.gradient_pipeline_layout,
-//         .stage = stage_ci,
-//     });
-
-//     check_vk(vk.vkCreateComputePipelines(self.device, null, 1, &compute_ci, null, &self.gradient_pipeline));
-//     vk.vkDestroyShaderModule(self.device, comp_module, vk_alloc_cbs);
-//     self.pipeline_deletion_queue.push(self.gradient_pipeline);
-//     self.pipeline_layout_deletion_queue.push(self.gradient_pipeline_layout);
-// }
+    return pipeline;
+}

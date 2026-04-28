@@ -102,12 +102,9 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
     for (&framecontexts) |*framecontext| framecontext.init(device, physicaldevice, allocationcallbacks);
 
     const asynccontext: AsyncContext = .init(device, physicaldevice, allocationcallbacks);
-    var bufferallocator: BufferAllocator = .init(device.handle, gpuallocator, allocationcallbacks);
-    var buffermanager: BufferManager = .init();
-    var descriptormanager: DescriptorManager = .init(allocator, device, pipelinemanager);
-
-    // buffermanager.initDummy(&bufferallocator, &descriptormanager);
-    buffermanager.initTest(&bufferallocator, &descriptormanager) catch @panic("failed to create test buffers");
+    const bufferallocator: BufferAllocator = .init(device.handle, gpuallocator, allocationcallbacks);
+    const buffermanager: BufferManager = .init();
+    const descriptormanager: DescriptorManager = .init(allocator, device, pipelinemanager);
 
     return .{
         .cpuallocator = allocator,
@@ -212,7 +209,13 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     const cmd = frame.command_buffer;
 
     // 1. OPEN COMMAND BUFFER
-    frame.beginFrame(self) catch |err| { /* handle resize */ return; };
+    frame.beginFrame(self) catch |err| {
+        if (err == error.SwapchainOutOfDate or window.state.resizerequest) {
+            self.resize(window);
+            window.state.resizerequest = false;
+            return;
+        }
+    };
 
     const count_offset = @as(u64, self.currentframe) * @sizeOf(u32);
     const indirect_offset = @as(u64, self.currentframe) * 10000 * @sizeOf(c.VkDrawIndirectCommand);
@@ -235,8 +238,16 @@ pub fn nextFrame(self: *Self, window: *Window) void {
         .size = @sizeOf(u32),
     };
     c.vkCmdPipelineBarrier(
-        cmd, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0, 0, null, 1, &fill_barrier, 0, null,
+        cmd,
+        c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+        c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,
+        0,
+        null,
+        1,
+        &fill_barrier,
+        0,
+        null,
     );
 
     // ==========================================================
@@ -244,8 +255,14 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     // ==========================================================
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.computepipeline);
     c.vkCmdBindDescriptorSets(
-        cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.computepipelinelayout,
-        0, 1, &self.descriptormanager.dynamicsets[self.currentframe], 0, null,
+        cmd,
+        c.VK_PIPELINE_BIND_POINT_COMPUTE,
+        self.pipelinemanager.sharedpipelinelayout,
+        0,
+        1,
+        &self.descriptormanager.dynamicsets[self.currentframe],
+        0,
+        null,
     );
     c.vkCmdDispatch(cmd, 1, 1, 1); // Dispatch threads based on object count
 
@@ -260,8 +277,16 @@ pub fn nextFrame(self: *Self, window: *Window) void {
         .dstAccessMask = c.VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
     };
     c.vkCmdPipelineBarrier(
-        cmd, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
-        0, 1, &compute_to_draw_barrier, 0, null, 0, null,
+        cmd,
+        c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+        0,
+        1,
+        &compute_to_draw_barrier,
+        0,
+        null,
+        0,
+        null,
     );
 
     // ==========================================================
@@ -271,8 +296,14 @@ pub fn nextFrame(self: *Self, window: *Window) void {
 
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.defaultpipeline);
     c.vkCmdBindDescriptorSets(
-        cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.pipelinelayout,
-        0, 1, &self.descriptormanager.dynamicsets[self.currentframe], 0, null,
+        cmd,
+        c.VK_PIPELINE_BIND_POINT_GRAPHICS,
+        self.pipelinemanager.sharedpipelinelayout,
+        0,
+        1,
+        &self.descriptormanager.dynamicsets[self.currentframe],
+        0,
+        null,
     );
 
     c.vkCmdDrawIndirectCount(
@@ -296,5 +327,12 @@ pub fn updateScene(self: *Self, camerarot: Quat, camerapos: Vec3, time: f32) voi
     // self.buffermanager.rotateDummy(self.currentframe, self.framenumber);
     const aspect = @as(f32, @floatFromInt(self.drawextent2d.width)) /
         @as(f32, @floatFromInt(self.drawextent2d.height));
-    self.buffermanager.updateScene(self.currentframe, aspect, camerarot, camerapos, time);
+    self.buffermanager.updateScene(
+        &self.bufferallocator,
+        self.currentframe,
+        aspect,
+        camerarot,
+        camerapos,
+        time,
+    );
 }

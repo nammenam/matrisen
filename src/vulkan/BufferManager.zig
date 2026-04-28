@@ -184,3 +184,40 @@ pub fn uploadMesh(
 
     return draw_data;
 }
+
+// Writes the SceneData with dynamic offsets based on the frame
+pub fn updateScene(
+    self: *Self,
+    bufferallocator: *BufferAllocator,
+    frame_index: u8,
+    aspect_ratio: f32,
+    camerarot: Quat,
+    camerapos: Vec3,
+    time: f32,
+) void {
+    var ptr = @as(*SceneData, @ptrCast(@alignCast(self.scenebuffers[frame_index].info.pMappedData.?)));
+
+    ptr.view = camerarot.view(camerapos);
+    ptr.proj = Mat4x4.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.1, 1000.0);
+    ptr.viewproj = ptr.proj.mul(ptr.view);
+
+    ptr.ambient_color = Vec4.new(1.0, 0.5, 0.0, 1.0);
+    ptr.sun_color = Vec4.new(1.0, 1.0, 0.9, 1.0);
+    ptr.sun_direction = Vec3.new(0.2, -0.5, 1.0).normalized().toVec4(0.0);
+
+    // Calculate BDA base addresses
+    const b_trans = bufferallocator.getBufferAddress(self.transformbuffer);
+    const b_draws = bufferallocator.getBufferAddress(self.drawbuffer);
+    const b_indir = bufferallocator.getBufferAddress(self.indirectbuffer);
+    const b_count = bufferallocator.getBufferAddress(self.countbuffer);
+
+    // Calculate byte offsets for this specific frame
+    const frame_u64 = @as(u64, frame_index);
+    _ = time;
+
+    // Inject the offset pointers directly into the shader!
+    ptr.transforms = b_trans + (frame_u64 * MAX_OBJECTS * @sizeOf(TransformData));
+    ptr.draws = b_draws + (frame_u64 * MAX_OBJECTS * @sizeOf(DrawData));
+    ptr.indirectCommands = b_indir + (frame_u64 * MAX_OBJECTS * @sizeOf(c.VkDrawIndirectCommand));
+    ptr.drawCount = b_count + (frame_u64 * @sizeOf(u32));
+}

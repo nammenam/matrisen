@@ -2,7 +2,7 @@ const std = @import("std");
 const log = std.log.scoped(.defaultpipeline);
 const c = @import("../../clibs/clibs.zig").libs;
 const checkVkPanic = @import("../debug.zig").checkVkPanic;
-const linalg = @import("../../linalg");
+const linalg = @import("../../linalg.zig");
 const Vec3 = linalg.Vec3(f32);
 const Vec4 = linalg.Vec4(f32);
 const PipelineBuilder = @import("../PipelineBuilder.zig");
@@ -15,8 +15,9 @@ pub fn init(
     pipelinelayout: c.VkPipelineLayout,
     allocationcallbacks: ?*c.VkAllocationCallbacks,
 ) c.VkPipeline {
-    const vertex_code = @import("default.vert").code_u8;
-    const fragment_code = @import("default.frag").code_u8;
+    // Import the Slang modules generated in build.zig
+    const vertex_code = @import("main_vertex").code_u8;
+    const fragment_code = @import("main_fragment").code_u8;
 
     const vertex_module = PipelineBuilder.createShaderModule(
         device,
@@ -28,6 +29,7 @@ pub fn init(
         fragment_code,
         allocationcallbacks,
     ) orelse null;
+
     if (vertex_module != null) log.info("Created vertex shader module", .{});
     if (fragment_module != null) log.info("Created fragment shader module", .{});
 
@@ -38,13 +40,13 @@ pub fn init(
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = c.VK_SHADER_STAGE_VERTEX_BIT,
         .module = vertex_module,
-        .pName = "main",
+        .pName = "vertexMain", // Updated for Slang
     };
     const fragment: c.VkPipelineShaderStageCreateInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT,
         .module = fragment_module,
-        .pName = "main",
+        .pName = "fragmentMain", // Updated for Slang
     };
 
     var shaders: [2]c.VkPipelineShaderStageCreateInfo = .{ vertex, fragment };
@@ -59,9 +61,5 @@ pub fn init(
     pipelineBuilder.setColorAttachmentFormat(Core.renderformat);
     pipelineBuilder.setDepthFormat(Core.depthformat);
 
-    const pipeline = pipelineBuilder.buildPipeline(device, pipelinelayout);
-    // pipelineBuilder.enableBlendingAdditive();
-    // pipelineBuilder.enableDepthtest(false, c.VK_COMPARE_OP_LESS);
-    // const transparent = pipelineBuilder.build_pipeline(core.device.handle);
-    return pipeline;
+    return pipelineBuilder.buildPipeline(device, pipelinelayout);
 }
