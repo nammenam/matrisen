@@ -53,7 +53,7 @@ pub fn init(
     var pipelineBuilder: PipelineBuilder = .init();
     pipelineBuilder.shader_stages = &shaders;
     pipelineBuilder.setInputTopology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-    pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_FILL);
+    pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_LINE);
     pipelineBuilder.setCullMode(c.VK_CULL_MODE_NONE, c.VK_FRONT_FACE_CLOCKWISE);
     pipelineBuilder.setMultisampling4();
     pipelineBuilder.disableBlending();

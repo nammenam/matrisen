@@ -51,7 +51,10 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) Self {
     var deviceFeatures2: c.VkPhysicalDeviceFeatures2 = .{
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &shader_draw_parameters_features,
-        .features = .{ .multiDrawIndirect = c.VK_TRUE },
+        .features = .{
+            .multiDrawIndirect = c.VK_TRUE,
+            .fillModeNonSolid = c.VK_TRUE,
+        },
     };
 
     var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo){};

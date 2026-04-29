@@ -6,11 +6,26 @@ import common;
 
 // --- Value Noise Helpers ---
 
-float hash(float2 p) {
-  p = frac(p * float2(127.1, 311.7));
-  p += dot(p, p + 19.19);
-  return frac(p.x * p.y);
+
+
+uint pcg(uint v) {
+    uint state = v * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
 }
+
+float hash(float2 p) {
+    uint2 q = uint2(int2(p));
+    uint n = pcg(q.x ^ pcg(q.y));
+    return float(n) * (1.0 / 4294967296.0);
+}
+
+// float hash(float2 p) {
+//     uint2 q = uint2(int2(p));
+//     q = q * uint2(1597334673u, 3812015801u);
+//     uint n = (q.x ^ q.y) * 1597334673u;
+//     return float(n) * (1.0 / 4294967296.0);
+// }
 
 float valueNoise(float2 p) {
   float2 i = floor(p);
@@ -93,14 +108,7 @@ void terain(uint3 threadId: SV_DispatchThreadID) {
 
   float t = saturate(wz / HEIGHT_SCALE);
   float3 col;
-  if (t < 0.3)
-    col = lerp(float3(0.42, 0.32, 0.18), float3(0.25, 0.55, 0.20), t / 0.3);
-  else if (t < 0.75)
-    col = lerp(float3(0.25, 0.55, 0.20), float3(0.55, 0.55, 0.55),
-               (t - 0.3) / 0.45);
-  else
-    col = lerp(float3(0.55, 0.55, 0.55), float3(1.0, 1.0, 1.0),
-               (t - 0.75) / 0.25);
+  col = lerp(float3(0.10, 0.10, 0.10), float3(0.95, 0.95, 0.90), t);
 
   Vertex v;
   v.position = float3(wx, wy, wz);

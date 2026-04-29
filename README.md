@@ -26,7 +26,7 @@ useful graphics in useful formats for plotting, illustrating and animation tasks
 [ ] transparent shader
 [ ] 2d/ui shader
 
-![](docs/Screenshot.png)
+![](screenshots/terrainGen.png)
 
 
 

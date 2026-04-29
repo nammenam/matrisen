@@ -59,7 +59,6 @@ pub fn build(b: *Build) !void {
     const shaders_step = b.step("shaders", "Compile Slang shaders");
 
     // Explicitly compile the three entry points from your scene.slang file
-    // Ensure "scene.slang" is located in your `shaderpath` folder!
     addSlangShader(b, matrisen, shaders_step, "pbr.slang", "vertexMain", "vertex");
     addSlangShader(b, matrisen, shaders_step, "pbr.slang", "fragmentMain", "fragment");
     addSlangShader(b, matrisen, shaders_step, "draw.slang", "drawMain", "compute");
@@ -78,9 +77,7 @@ pub fn build(b: *Build) !void {
 }
 
 fn addSlangShader(b: *std.Build, mod: *std.Build.Module, shaders_step: *std.Build.Step, filename: []const u8, entry_point: []const u8, stage: []const u8) void {
-    // const name_stem = std.fs.path.stem(filename);
     const shader_src = b.path(b.fmt("{s}/{s}", .{ shaderpath, filename }));
-    // const common_src = b.fmt("{s}/common.slang", .{shaderpath});
 
     const cmd = b.addSystemCommand(&.{"slangc"});
     cmd.addFileArg(shader_src);
@@ -94,8 +91,6 @@ fn addSlangShader(b: *std.Build, mod: *std.Build.Module, shaders_step: *std.Buil
     cmd.addArg(entry_point);
     cmd.addArg("-stage");
     cmd.addArg(stage);
-    // cmd.addArg("-I");
-    // cmd.addArg(common_src);
     cmd.addArg("-o");
 
     const spv_output = cmd.addOutputFileArg(b.fmt("{s}.spv", .{entry_point}));

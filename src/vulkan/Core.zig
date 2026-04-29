@@ -91,7 +91,11 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
         allocationcallbacks,
     );
     const drawextent2d = setRenderScale(swapchain.extent, renderscale);
-    const drawextent3d: c.VkExtent3D = .{ .width = drawextent2d.width, .height = drawextent2d.height, .depth = 1 };
+    const drawextent3d: c.VkExtent3D = .{
+        .width = drawextent2d.width,
+        .height = drawextent2d.height,
+        .depth = 1,
+    };
     var imageallocator: ImageAllocator = .init(device.handle, gpuallocator, allocationcallbacks);
     const drawimage = imageallocator.createDrawImage(drawextent2d, renderformat);
     const renderimage = imageallocator.createRenderImage(drawextent2d, renderformat);
