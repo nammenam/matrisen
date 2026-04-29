@@ -208,7 +208,6 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     var frame = self.framecontexts[self.currentframe];
     const cmd = frame.command_buffer;
 
-    // 1. OPEN COMMAND BUFFER
     frame.beginFrame(self) catch |err| {
         if (err == error.SwapchainOutOfDate or window.state.resizerequest) {
             self.resize(window);
@@ -219,13 +218,8 @@ pub fn nextFrame(self: *Self, window: *Window) void {
 
     const count_offset = @as(u64, self.currentframe) * @sizeOf(u32);
     const indirect_offset = @as(u64, self.currentframe) * 10000 * @sizeOf(c.VkDrawIndirectCommand);
-    // ==========================================================
-    // 2. RESET COUNT BUFFER
-    // ==========================================================
-    // Fill the 4-byte count buffer with 0 before compute starts
     c.vkCmdFillBuffer(cmd, self.buffermanager.countbuffer.buffer, count_offset, @sizeOf(u32), 0);
 
-    // Barrier: Ensure FillBuffer is done before the Compute Shader reads/writes it
     const fill_barrier = c.VkBufferMemoryBarrier{
         .sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
         .pNext = null,
@@ -253,7 +247,6 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     // ==========================================================
     // 3. COMPUTE PASS (Culling)
     // ==========================================================
-    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.computepipeline);
     c.vkCmdBindDescriptorSets(
         cmd,
         c.VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -264,12 +257,14 @@ pub fn nextFrame(self: *Self, window: *Window) void {
         0,
         null,
     );
+    // FIX no hardcode number of threads
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.terainpipeline);
+    c.vkCmdDispatch(cmd, 16, 16, 1); // 16*16 = 256 threads each axis
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.computepipeline);
     c.vkCmdDispatch(cmd, 1, 1, 1); // Dispatch threads based on object count
-
     // ==========================================================
     // 4. MEMORY BARRIER (Block graphics until compute is done)
     // ==========================================================
-    // We use a global memory barrier here to cover BOTH the indirect buffer and count buffer easily
     const compute_to_draw_barrier = c.VkMemoryBarrier{
         .sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .pNext = null,
@@ -316,19 +311,18 @@ pub fn nextFrame(self: *Self, window: *Window) void {
         @sizeOf(c.VkDrawIndirectCommand),
     );
     frame.endGraphicsPass(self);
-
-    // 6. CLOSE & SUBMIT
+    // =============================================================
+    // SUBMIT
+    // =============================================================
     frame.endFrame(self);
     self.framenumber +%= 1;
     self.switch_frame();
 }
 
 pub fn updateScene(self: *Self, camerarot: Quat, camerapos: Vec3, time: f32) void {
-    // self.buffermanager.rotateDummy(self.currentframe, self.framenumber);
     const aspect = @as(f32, @floatFromInt(self.drawextent2d.width)) /
         @as(f32, @floatFromInt(self.drawextent2d.height));
     self.buffermanager.updateScene(
-        &self.bufferallocator,
         self.currentframe,
         aspect,
         camerarot,

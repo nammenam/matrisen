@@ -10,7 +10,7 @@ pub fn init(
     allocationcallbacks: ?*c.VkAllocationCallbacks,
 ) c.VkPipeline {
     // Import the Slang module generated in build.zig
-    const compute_code = @import("drawMain").code_u8;
+    const compute_code = @import("terain").code_u8;
 
     const compute_module = PipelineBuilder.createShaderModule(
         device,

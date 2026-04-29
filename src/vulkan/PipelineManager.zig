@@ -1,7 +1,8 @@
 const std = @import("std");
 const c = @import("../clibs/clibs.zig").libs;
 const defaultpipline = @import("pipelines/default.zig");
-const computepipeline_mod = @import("pipelines/compute.zig"); // Import the new module
+const computepipeline_mod = @import("pipelines/compute.zig");
+const terainpipeline_mod = @import("pipelines/terain.zig");
 const checkVkPanic = @import("debug.zig").checkVkPanic;
 const Core = @import("Core.zig");
 const DescriptorLayoutBuilder = @import("DescriptorLayoutBuilder.zig");
@@ -12,6 +13,7 @@ sharedpipelinelayout: c.VkPipelineLayout,
 descriptorlayout: c.VkDescriptorSetLayout,
 defaultpipeline: c.VkPipeline,
 computepipeline: c.VkPipeline,
+terainpipeline: c.VkPipeline,
 
 pub fn init(allocator: std.mem.Allocator, device: c.VkDevice, allocationcallbacks: ?*c.VkAllocationCallbacks) Self {
     var descriptorlayout: c.VkDescriptorSetLayout = undefined;
@@ -46,10 +48,12 @@ pub fn init(allocator: std.mem.Allocator, device: c.VkDevice, allocationcallback
     // Delegate pipeline creation to their respective files
     const pipeline = defaultpipline.init(device, sharedpipelinelayout, allocationcallbacks);
     const computepipe = computepipeline_mod.init(device, sharedpipelinelayout, allocationcallbacks);
+    const terainpipe = terainpipeline_mod.init(device, sharedpipelinelayout, allocationcallbacks);
 
     return .{
         .defaultpipeline = pipeline,
         .computepipeline = computepipe,
+        .terainpipeline = terainpipe,
         .sharedpipelinelayout = sharedpipelinelayout,
         .descriptorlayout = descriptorlayout,
     };
@@ -60,4 +64,5 @@ pub fn deinit(self: *Self, device: c.VkDevice, allocationcallbacks: ?*c.VkAlloca
     c.vkDestroyPipelineLayout(device, self.sharedpipelinelayout, allocationcallbacks);
     c.vkDestroyPipeline(device, self.defaultpipeline, allocationcallbacks);
     c.vkDestroyPipeline(device, self.computepipeline, allocationcallbacks);
+    c.vkDestroyPipeline(device, self.terainpipeline, allocationcallbacks);
 }

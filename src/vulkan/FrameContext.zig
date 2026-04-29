@@ -11,13 +11,11 @@ const DescriptorAllocator = @import("DescriptorAllocator.zig");
 
 const Self = @This();
 
-acquiresemaphore: c.VkSemaphore = null,
-renderfence: c.VkFence = null,
+acquiresemaphore: c.VkSemaphore = null, // Signaled by Swapchain when image is ready
+fence: c.VkFence = null, // Signaled by GPU when drawing is done
 command_pool: c.VkCommandPool = null,
 command_buffer: c.VkCommandBuffer = null,
 swapchainindex: u32 = 0,
-descriptorallocator: DescriptorAllocator = .{},
-dynamicset: c.VkDescriptorSet = undefined,
 
 pub fn init(
     self: *Self,
@@ -26,11 +24,11 @@ pub fn init(
     allocationcallbacks: ?*c.VkAllocationCallbacks,
 ) void {
     const semaphore_ci = c.VkSemaphoreCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-
     const fence_ci = c.VkFenceCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
         .flags = c.VK_FENCE_CREATE_SIGNALED_BIT,
     };
+
     const command_pool_info = graphics_cmd_pool_info(physicaldevice.graphics_queue_family);
     debug.checkVkPanic(c.vkCreateCommandPool(
         device.handle,
@@ -38,41 +36,30 @@ pub fn init(
         allocationcallbacks,
         &self.command_pool,
     ));
+
     const command_buffer_info = graphics_cmdbuffer_info(self.command_pool);
-    debug.checkVkPanic(c.vkAllocateCommandBuffers(
-        device.handle,
-        &command_buffer_info,
-        &self.command_buffer,
-    ));
+    debug.checkVkPanic(c.vkAllocateCommandBuffers(device.handle, &command_buffer_info, &self.command_buffer));
+
     debug.checkVkPanic(c.vkCreateSemaphore(
         device.handle,
         &semaphore_ci,
         allocationcallbacks,
         &self.acquiresemaphore,
     ));
-    debug.checkVkPanic(c.vkCreateFence(
-        device.handle,
-        &fence_ci,
-        allocationcallbacks,
-        &self.renderfence,
-    ));
+    debug.checkVkPanic(c.vkCreateFence(device.handle, &fence_ci, allocationcallbacks, &self.fence));
 
     log.info("Created framecontext", .{});
 }
 
 pub fn deinit(self: *Self, device: Device, allocationcallbacks: ?*c.VkAllocationCallbacks) void {
     c.vkDestroyCommandPool(device.handle, self.command_pool, allocationcallbacks);
-    c.vkDestroyFence(device.handle, self.renderfence, allocationcallbacks);
+    c.vkDestroyFence(device.handle, self.fence, allocationcallbacks); // Fixed name
     c.vkDestroySemaphore(device.handle, self.acquiresemaphore, allocationcallbacks);
 }
 
-pub fn beginFrame(self: *Self, core: *Core) !void {
+pub fn beginFrame(self: *Self, core: *const Core) !void {
     const timeout: u64 = 4_000_000_000; // 4 seconds
-
-    // Wait for the previous frame to finish
-    debug.checkVkPanic(c.vkWaitForFences(core.device.handle, 1, &self.renderfence, c.VK_TRUE, timeout));
-
-    // Acquire the next swapchain image
+    debug.checkVkPanic(c.vkWaitForFences(core.device.handle, 1, &self.fence, c.VK_TRUE, timeout));
     const e = c.vkAcquireNextImageKHR(
         core.device.handle,
         core.swapchain.handle,
@@ -85,11 +72,9 @@ pub fn beginFrame(self: *Self, core: *Core) !void {
         return error.SwapchainOutOfDate;
     }
 
-    // Reset fences and command buffer
-    debug.checkVkPanic(c.vkResetFences(core.device.handle, 1, &self.renderfence));
+    debug.checkVkPanic(c.vkResetFences(core.device.handle, 1, &self.fence));
     debug.checkVkPanic(c.vkResetCommandBuffer(self.command_buffer, 0));
 
-    // OPEN COMMAND BUFFER
     const cmd_begin_info: c.VkCommandBufferBeginInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -97,16 +82,73 @@ pub fn beginFrame(self: *Self, core: *Core) !void {
     debug.checkVkPanic(c.vkBeginCommandBuffer(self.command_buffer, &cmd_begin_info));
 }
 
+pub fn endFrame(self: *Self, core: *const Core) void {
+    const cmd = self.command_buffer;
+
+    debug.checkVkPanic(c.vkEndCommandBuffer(cmd));
+
+    const cmd_info = c.VkCommandBufferSubmitInfo{
+        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+        .commandBuffer = cmd,
+    };
+
+    const wait_info = c.VkSemaphoreSubmitInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .semaphore = self.acquiresemaphore, // Keep this!
+        .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+    };
+
+    const signal_info = c.VkSemaphoreSubmitInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .semaphore = core.swapchain.semaphores[self.swapchainindex],
+        .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+    };
+
+    const submit = c.VkSubmitInfo2{
+        .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+        .commandBufferInfoCount = 1,
+        .pCommandBufferInfos = &cmd_info,
+        .waitSemaphoreInfoCount = 1,
+        .pWaitSemaphoreInfos = &wait_info,
+        .signalSemaphoreInfoCount = 1,
+        .pSignalSemaphoreInfos = &signal_info,
+    };
+
+    debug.checkVkPanic(c.vkQueueSubmit2(core.device.graphics_queue, 1, &submit, self.fence));
+
+    const present_info = c.VkPresentInfoKHR{
+        .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &core.swapchain.semaphores[self.swapchainindex],
+        .swapchainCount = 1,
+        .pSwapchains = &core.swapchain.handle,
+        .pImageIndices = &self.swapchainindex,
+    };
+
+    _ = c.vkQueuePresentKHR(core.device.graphics_queue, &present_info);
+}
+
 pub fn beginGraphicsPass(self: *Self, core: *Core) void {
     const cmd = self.command_buffer;
     const clearvalue = c.VkClearColorValue{ .float32 = .{ 0.014, 0.014, 0.014, 1 } };
 
-    // Transition the render image so we can draw to it
     transitionImage(
         cmd,
         core.renderimage.image,
         c.VK_IMAGE_LAYOUT_UNDEFINED,
         c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    );
+    transitionImage(
+        cmd,
+        core.drawimage.image,
+        c.VK_IMAGE_LAYOUT_UNDEFINED,
+        c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    );
+    transitionImage(
+        cmd,
+        core.depthimage.image,
+        c.VK_IMAGE_LAYOUT_UNDEFINED,
+        c.VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
     );
 
     const color_attachment: c.VkRenderingAttachmentInfo = .{
@@ -198,55 +240,6 @@ pub fn endGraphicsPass(self: *Self, core: *Core) void {
         c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
     );
-}
-
-pub fn endFrame(self: *Self, core: *Core) void {
-    const cmd = self.command_buffer;
-
-    // CLOSE COMMAND BUFFER
-    debug.checkVkPanic(c.vkEndCommandBuffer(cmd));
-
-    const cmd_info = c.VkCommandBufferSubmitInfo{
-        .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-        .commandBuffer = cmd,
-    };
-
-    const wait_info = c.VkSemaphoreSubmitInfo{
-        .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .semaphore = self.acquiresemaphore,
-        .stageMask = c.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
-    };
-
-    const signal_info = c.VkSemaphoreSubmitInfo{
-        .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .semaphore = core.swapchain.semaphores[self.swapchainindex],
-        .stageMask = c.VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
-    };
-
-    const submit = c.VkSubmitInfo2{
-        .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
-        .commandBufferInfoCount = 1,
-        .pCommandBufferInfos = &cmd_info,
-        .waitSemaphoreInfoCount = 1,
-        .pWaitSemaphoreInfos = &wait_info,
-        .signalSemaphoreInfoCount = 1,
-        .pSignalSemaphoreInfos = &signal_info,
-    };
-
-    // SUBMIT TO GPU
-    debug.checkVkPanic(c.vkQueueSubmit2(core.device.graphics_queue, 1, &submit, self.renderfence));
-
-    const present_info = c.VkPresentInfoKHR{
-        .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &core.swapchain.semaphores[self.swapchainindex],
-        .swapchainCount = 1,
-        .pSwapchains = &core.swapchain.handle,
-        .pImageIndices = &self.swapchainindex,
-    };
-
-    // PRESENT TO WINDOW
-    _ = c.vkQueuePresentKHR(core.device.graphics_queue, &present_info);
 }
 
 pub fn graphics_cmd_pool_info(queue_family_index: u32) c.VkCommandPoolCreateInfo {

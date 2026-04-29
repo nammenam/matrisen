@@ -3,7 +3,7 @@ const log = std.log.scoped(.build);
 const Build = std.Build;
 const builtin = @import("builtin");
 
-const shaderpath = "src/example/shaders/Slang";
+const shaderpath = "src/example/shaders";
 
 pub fn build(b: *Build) !void {
     const optimize = b.standardOptimizeOption(.{});
@@ -43,6 +43,10 @@ pub fn build(b: *Build) !void {
         }),
     });
 
+    // Add these two lines to bypass the internal Zig linker bug:
+    exe.use_llvm = true;
+    exe.use_lld = true;
+
     exe.root_module.addOptions("config", options);
     exe.linkLibCpp();
     exe.linkLibC();
@@ -56,9 +60,10 @@ pub fn build(b: *Build) !void {
 
     // Explicitly compile the three entry points from your scene.slang file
     // Ensure "scene.slang" is located in your `shaderpath` folder!
-    addSlangShader(b, matrisen, shaders_step, "main.slang", "vertexMain", "vertex");
-    addSlangShader(b, matrisen, shaders_step, "main.slang", "fragmentMain", "fragment");
-    addSlangShader(b, matrisen, shaders_step, "main.slang", "computeMain", "compute");
+    addSlangShader(b, matrisen, shaders_step, "pbr.slang", "vertexMain", "vertex");
+    addSlangShader(b, matrisen, shaders_step, "pbr.slang", "fragmentMain", "fragment");
+    addSlangShader(b, matrisen, shaders_step, "draw.slang", "drawMain", "compute");
+    addSlangShader(b, matrisen, shaders_step, "terrain.slang", "terain", "compute");
 
     b.installArtifact(exe);
 
@@ -73,8 +78,9 @@ pub fn build(b: *Build) !void {
 }
 
 fn addSlangShader(b: *std.Build, mod: *std.Build.Module, shaders_step: *std.Build.Step, filename: []const u8, entry_point: []const u8, stage: []const u8) void {
-    const name_stem = std.fs.path.stem(filename);
+    // const name_stem = std.fs.path.stem(filename);
     const shader_src = b.path(b.fmt("{s}/{s}", .{ shaderpath, filename }));
+    // const common_src = b.fmt("{s}/common.slang", .{shaderpath});
 
     const cmd = b.addSystemCommand(&.{"slangc"});
     cmd.addFileArg(shader_src);
@@ -88,10 +94,11 @@ fn addSlangShader(b: *std.Build, mod: *std.Build.Module, shaders_step: *std.Buil
     cmd.addArg(entry_point);
     cmd.addArg("-stage");
     cmd.addArg(stage);
+    // cmd.addArg("-I");
+    // cmd.addArg(common_src);
     cmd.addArg("-o");
 
-    // Output file looks like: "scene_vertex.spv"
-    const spv_output = cmd.addOutputFileArg(b.fmt("{s}_{s}.spv", .{ name_stem, stage }));
+    const spv_output = cmd.addOutputFileArg(b.fmt("{s}.spv", .{entry_point}));
     shaders_step.dependOn(&cmd.step);
 
     const gen = b.addWriteFiles();
@@ -107,6 +114,6 @@ fn addSlangShader(b: *std.Build, mod: *std.Build.Module, shaders_step: *std.Buil
 
     const shader_module = b.createModule(.{ .root_source_file = wrapper_path });
 
-    const import_name = b.fmt("{s}_{s}", .{ name_stem, stage });
+    const import_name = b.fmt("{s}", .{entry_point});
     mod.addImport(import_name, shader_module);
 }

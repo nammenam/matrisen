@@ -18,6 +18,11 @@ transfer_queue: c.VkQueue,
 pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) Self {
     const alloc_cb: ?*c.VkAllocationCallbacks = null;
 
+    // var meshshading: c.VkPhysicalDeviceMeshShaderFeaturesEXT = .{
+    //     .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT,
+    //     .taskShader = c.VK_TRUE,
+    //     .meshShader = c.VK_TRUE,
+    // };
     // var features14: c.VkPhysicalDeviceVulkan14Features = .{
     //     .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
     //     .dynamicRenderingLocalRead = c.VK_TRUE,
@@ -33,6 +38,7 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) Self {
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
         .bufferDeviceAddress = c.VK_TRUE,
         .descriptorIndexing = c.VK_TRUE,
+        .drawIndirectCount = c.VK_TRUE,
         .pNext = &features13,
     };
 
@@ -46,13 +52,6 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) Self {
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &shader_draw_parameters_features,
         .features = .{ .multiDrawIndirect = c.VK_TRUE },
-    };
-
-    var meshshading: c.VkPhysicalDeviceMeshShaderFeaturesEXT = .{
-        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT,
-        .pNext = &deviceFeatures2,
-        .taskShader = c.VK_TRUE,
-        .meshShader = c.VK_TRUE,
     };
 
     var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo){};
@@ -93,7 +92,7 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) Self {
 
     const device_info: c.VkDeviceCreateInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = &meshshading,
+        .pNext = &deviceFeatures2,
         .queueCreateInfoCount = @as(u32, @intCast(queue_create_infos.items.len)),
         .pQueueCreateInfos = queue_create_infos.items.ptr,
         .enabledLayerCount = 0,

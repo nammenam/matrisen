@@ -16,8 +16,8 @@ pub fn init(
     allocationcallbacks: ?*c.VkAllocationCallbacks,
 ) c.VkPipeline {
     // Import the Slang modules generated in build.zig
-    const vertex_code = @import("main_vertex").code_u8;
-    const fragment_code = @import("main_fragment").code_u8;
+    const vertex_code = @import("vertexMain").code_u8;
+    const fragment_code = @import("fragmentMain").code_u8;
 
     const vertex_module = PipelineBuilder.createShaderModule(
         device,
@@ -40,13 +40,13 @@ pub fn init(
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = c.VK_SHADER_STAGE_VERTEX_BIT,
         .module = vertex_module,
-        .pName = "vertexMain", // Updated for Slang
+        .pName = "main", // Updated for Slang
     };
     const fragment: c.VkPipelineShaderStageCreateInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT,
         .module = fragment_module,
-        .pName = "fragmentMain", // Updated for Slang
+        .pName = "main", // Updated for Slang
     };
 
     var shaders: [2]c.VkPipelineShaderStageCreateInfo = .{ vertex, fragment };

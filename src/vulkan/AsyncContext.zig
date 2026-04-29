@@ -64,10 +64,10 @@ pub fn deinit(self: *Self, device: Device, allocationcallbacks: ?*c.VkAllocation
 }
 
 pub fn submitBegin(self: *Self, core: *Core) void {
-    debug.check_vk(c.vkResetFences(core.device.handle, 1, &self.fence)) catch {
+    debug.checkVk(c.vkResetFences(core.device.handle, 1, &self.fence)) catch {
         @panic("Failed to reset immidiate fence");
     };
-    debug.check_vk(c.vkResetCommandBuffer(self.commandbuffer, 0)) catch {
+    debug.checkVk(c.vkResetCommandBuffer(self.commandbuffer, 0)) catch {
         @panic("Failed to reset immidiate command buffer");
     };
     const cmd = self.commandbuffer;
@@ -76,14 +76,14 @@ pub fn submitBegin(self: *Self, core: *Core) void {
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    debug.check_vk(c.vkBeginCommandBuffer(cmd, &commmand_begin_ci)) catch {
+    debug.checkVk(c.vkBeginCommandBuffer(cmd, &commmand_begin_ci)) catch {
         @panic("Failed to begin command buffer");
     };
 }
 
 pub fn submitEnd(self: *Self, core: *Core) void {
     const cmd = self.commandbuffer;
-    debug.check_vk(c.vkEndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");
+    debug.checkVk(c.vkEndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");
 
     const cmd_info: c.VkCommandBufferSubmitInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
@@ -94,6 +94,6 @@ pub fn submitEnd(self: *Self, core: *Core) void {
         .commandBufferInfoCount = 1,
         .pCommandBufferInfos = &cmd_info,
     };
-    debug.checkVkPanic(c.vkQueueSubmit2(core.graphics_queue, 1, &submit_info, self.fence));
+    debug.checkVkPanic(c.vkQueueSubmit2(core.device.graphics_queue, 1, &submit_info, self.fence));
     debug.checkVkPanic(c.vkWaitForFences(core.device.handle, 1, &self.fence, c.VK_TRUE, 1_000_000_000));
 }

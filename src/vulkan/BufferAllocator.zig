@@ -107,15 +107,15 @@ pub fn upload(core: *Core, data_slice: []const u8, buffer: AllocatedBuffer, dst_
     }
 
     // Copy from Staging to Giant Buffer at the correct offset
-    AsyncContext.submitBegin(core);
+    core.asynccontext.submitBegin(core);
     const copy_region = c.VkBufferCopy{
         .srcOffset = 0,
         .dstOffset = dst_offset, // <--- Use the offset here!
         .size = size,
     };
-    const cmd = core.asynccontext.command_buffer;
+    const cmd = core.asynccontext.commandbuffer;
     c.vkCmdCopyBuffer(cmd, staging_buffer.buffer, buffer.buffer, 1, &copy_region);
-    AsyncContext.submitEnd(core);
+    core.asynccontext.submitEnd(core);
 }
 
 pub fn getBufferAddress(self: *Self, buffer: AllocatedBuffer) c.VkDeviceAddress {

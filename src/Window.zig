@@ -81,7 +81,6 @@ pub fn processInput(self: *Self) void {
                     c.SDL_SCANCODE_Q => self.state.q = true,
                     c.SDL_SCANCODE_E => self.state.e = true,
                     c.SDL_SCANCODE_TAB => {
-                        self.state.tab = true;
                         toggleMouseCapture(self);
                     },
                     else => {},
@@ -95,10 +94,7 @@ pub fn processInput(self: *Self) void {
                     c.SDL_SCANCODE_D => self.state.d = false,
                     c.SDL_SCANCODE_Q => self.state.q = false,
                     c.SDL_SCANCODE_E => self.state.e = false,
-                    c.SDL_SCANCODE_TAB => {
-                        self.state.tab = false;
-                        toggleMouseCapture(self);
-                    },
+                    c.SDL_SCANCODE_TAB => {},
                     else => {},
                 }
             },
