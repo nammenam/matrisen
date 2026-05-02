@@ -1,14 +1,8 @@
 const std = @import("std");
 const log = std.log.scoped(.defaultpipeline);
 const c = @import("../../clibs/clibs.zig").libs;
-const checkVkPanic = @import("../debug.zig").checkVkPanic;
-const linalg = @import("../../linalg.zig");
-const Vec3 = linalg.Vec3(f32);
-const Vec4 = linalg.Vec4(f32);
 const PipelineBuilder = @import("../PipelineBuilder.zig");
-const FrameContext = @import("../FrameContext.zig");
 const Core = @import("../Core.zig");
-const Mat4x4 = linalg.Mat4x4(f32);
 
 pub fn init(
     device: c.VkDevice,
@@ -40,19 +34,20 @@ pub fn init(
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = c.VK_SHADER_STAGE_VERTEX_BIT,
         .module = vertex_module,
-        .pName = "main", // Updated for Slang
+        .pName = "main",
     };
     const fragment: c.VkPipelineShaderStageCreateInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT,
         .module = fragment_module,
-        .pName = "main", // Updated for Slang
+        .pName = "main",
     };
 
     var shaders: [2]c.VkPipelineShaderStageCreateInfo = .{ vertex, fragment };
     var pipelineBuilder: PipelineBuilder = .init();
     pipelineBuilder.shader_stages = &shaders;
     pipelineBuilder.setInputTopology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    // pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_FILL);
     pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_LINE);
     pipelineBuilder.setCullMode(c.VK_CULL_MODE_NONE, c.VK_FRONT_FACE_CLOCKWISE);
     pipelineBuilder.setMultisampling4();

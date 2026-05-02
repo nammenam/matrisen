@@ -3,6 +3,7 @@ const m = @import("matrisen");
 const log = std.log.scoped(.main);
 const Core = m.Core;
 const Vertex = m.BufferManager.Vertex;
+const Camera = m.Camera;
 const BufferManager = m.BufferManager;
 const Quat = m.linalg.Quat(f32);
 const Vec2 = m.linalg.Vec2(f32);
@@ -15,29 +16,19 @@ pub fn loop(engine: *Core, window: *m.Window) void {
     window.toggleMouseCapture();
     var timer = std.time.Timer.start() catch @panic("Failed to start timer");
     var time: f32 = 0;
-    var camerarot: Quat = .identity;
-    var camerapos: Vec3 = .{ .x = 0, .y = -5, .z = 2 };
+    var camera: Camera = .init;
 
-    // flip camera
-    // camerarot.rotateRoll(std.math.degreesToRadians(180));
-    camerarot.rotatePitch(std.math.degreesToRadians(-90));
+    camera.orientation.rotatePitch(std.math.degreesToRadians(-90));
+    camera.distance = 250;
 
     while (!window.state.quit) {
         const dt_ns = timer.lap();
         const dt_s: f32 = @as(f32, @floatFromInt(dt_ns)) / 1_000_000_000.0;
         time += dt_s;
         window.processInput();
-        if (window.state.w) camerapos.translateForward(&camerarot, 0.1);
-        if (window.state.s) camerapos.translateForward(&camerarot, -0.1);
-        if (window.state.a) camerapos.translatePitch(&camerarot, -0.1);
-        if (window.state.d) camerapos.translatePitch(&camerarot, 0.1);
-        if (window.state.q) camerapos.translateWorldZ(-0.1);
-        if (window.state.e) camerapos.translateWorldZ(0.1);
-        if (window.state.capturemouse) {
-            camerarot.rotatePitch(-window.state.mouse_y / 150);
-            camerarot.rotateWorldZ(-window.state.mouse_x / 150);
-        }
-        engine.updateScene(camerarot, camerapos, time);
+        // camera.firstPerson(window);
+        camera.orbit(window);
+        engine.updateScene(camera, time);
         engine.nextFrame(window);
     }
 }

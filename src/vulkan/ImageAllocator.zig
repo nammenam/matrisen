@@ -5,7 +5,6 @@ const log = std.log.scoped(.images);
 const AsyncContext = @import("AsyncContext.zig");
 const Vec4 = @import("../linalg.zig").Vec4(f32);
 const Core = @import("Core.zig");
-const transitionImage = @import("Renderer.zig").transitionImage;
 
 const Self = @This();
 

@@ -4,35 +4,9 @@ visualising mathemathics, physics or engineering problems, though it is not limi
 fields and can be used for anything graphics related. Future goals for this project is to export
 useful graphics in useful formats for plotting, illustrating and animation tasks
 
-
-```
-.
-├─ docs             DOCUMENTS
-├─ src              SOURCE FILES
-│   ├─ main.zig
-│   └─ ...
-├─ tools            DEVELOPMENT TOOLS, NOT REQUIRED TO COMPILE BUT IS NEEDED FOR BENCHMARKING
-├─ build.zig        BUILD SCRIPT
-├─ build.zig.zon    PACKAGE INFORMATION
-├─ config.zig       BUILD CONFIGURATION
-├─ LICENSE
-└─ README.md
-```
-
-[ ] fix buffermanager
-[ ] tranlate shaders into zig
-
-[ ] 3d shader
-[ ] transparent shader
-[ ] 2d/ui shader
-
 ![](screenshots/terrainGen.png)
 
+## Contents / Navigtaion Guide
 
-
-
-TODO
-fix buffermanager
-fix draw indirect so we can use gpu to issue draw calls
-finish designing universal structures
-switch to slang
+`  - src`
+`  - docs`

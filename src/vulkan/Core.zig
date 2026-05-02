@@ -4,6 +4,8 @@
 //! the terms of the GNU General Public License (GPL3)
 //! see the LICENSE file or <https://www.gnu.org/licenses/> for more details
 
+// TODO fix dependency incejtion on all members of this struct
+
 const std = @import("std");
 const log = std.log.scoped(.core);
 const debug = @import("debug.zig");
@@ -12,6 +14,7 @@ const c = @import("../clibs/clibs.zig").libs;
 
 const Quat = linalg.Quat(f32);
 const Vec3 = linalg.Vec3(f32);
+const Camera = @import("../Camera.zig");
 const Device = @import("Device.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
 const Swapchain = @import("Swapchain.zig");
@@ -257,7 +260,7 @@ pub fn nextFrame(self: *Self, window: *Window) void {
         self.pipelinemanager.sharedpipelinelayout,
         0,
         1,
-        &self.descriptormanager.dynamicsets[self.currentframe],
+        &self.descriptormanager.sets[self.currentframe],
         0,
         null,
     );
@@ -300,7 +303,7 @@ pub fn nextFrame(self: *Self, window: *Window) void {
         self.pipelinemanager.sharedpipelinelayout,
         0,
         1,
-        &self.descriptormanager.dynamicsets[self.currentframe],
+        &self.descriptormanager.sets[self.currentframe],
         0,
         null,
     );
@@ -323,14 +326,14 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     self.switch_frame();
 }
 
-pub fn updateScene(self: *Self, camerarot: Quat, camerapos: Vec3, time: f32) void {
+pub fn updateScene(self: *Self, camera: Camera, time: f32) void {
     const aspect = @as(f32, @floatFromInt(self.drawextent2d.width)) /
         @as(f32, @floatFromInt(self.drawextent2d.height));
     self.buffermanager.updateScene(
         self.currentframe,
         aspect,
-        camerarot,
-        camerapos,
+        camera.orientation,
+        camera.position,
         time,
     );
 }

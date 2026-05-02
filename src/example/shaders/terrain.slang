@@ -20,12 +20,12 @@ float hash(float2 p) {
     return float(n) * (1.0 / 4294967296.0);
 }
 
-// float hash(float2 p) {
-//     uint2 q = uint2(int2(p));
-//     q = q * uint2(1597334673u, 3812015801u);
-//     uint n = (q.x ^ q.y) * 1597334673u;
-//     return float(n) * (1.0 / 4294967296.0);
-// }
+float hashAlt(float2 p) {
+    uint2 q = uint2(int2(p));
+    q = q * uint2(1597334673u, 3812015801u);
+    uint n = (q.x ^ q.y) * 1597334673u;
+    return float(n) * (1.0 / 4294967296.0);
+}
 
 float valueNoise(float2 p) {
   float2 i = floor(p);
@@ -44,7 +44,7 @@ float valueNoise(float2 p) {
 
 float fbm(float2 p) {
   float height = 0.0;
-  float amplitude = 1.0;
+  float amplitude = 0.5;
   float frequency = 1.0;
   float total_amplitude = 0.0;
 
@@ -108,7 +108,8 @@ void terain(uint3 threadId: SV_DispatchThreadID) {
 
   float t = saturate(wz / HEIGHT_SCALE);
   float3 col;
-  col = lerp(float3(0.10, 0.10, 0.10), float3(0.95, 0.95, 0.90), t);
+  // col = lerp(float3(0.10, 0.10, 0.10), float3(0.95, 0.95, 0.90), t);
+  col = (normal + 1.0) * 0.5;
 
   Vertex v;
   v.position = float3(wx, wy, wz);

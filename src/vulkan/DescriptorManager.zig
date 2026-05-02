@@ -14,30 +14,18 @@ const Self = @This();
 
 allocator: std.mem.Allocator,
 device: c.VkDevice,
-// staticset: c.VkDescriptorSet,
-// staticallocator: DescriptorAllocator,
-dynamicallocators: [Core.multibuffering]DescriptorAllocator,
-dynamicsets: [Core.multibuffering]c.VkDescriptorSet,
+allocators: [Core.multibuffering]DescriptorAllocator,
+sets: [Core.multibuffering]c.VkDescriptorSet,
 
 pub fn init(allocator: std.mem.Allocator, device: Device, pipelinemanager: PipelineManager) Self {
-    // var staticratios = [_]DescriptorAllocator.PoolSizeRatio{
-    //     .{ .ratio = 2, .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER },
-    // };
-    var dynamicratios = [_]DescriptorAllocator.PoolSizeRatio{
+    var ratios = [_]DescriptorAllocator.PoolSizeRatio{
         .{ .ratio = 1, .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER },
     };
-    // var staticallocator: DescriptorAllocator = .init(device.handle, 10, &staticratios, allocator);
-    // const staticset = staticallocator.allocate(
-    //     allocator,
-    //     device.handle,
-    //     pipelinemanager.staticlayout,
-    //     null,
-    // );
-    var dynamicsets: [Core.multibuffering]c.VkDescriptorSet = @splat(undefined);
-    var dynamicallocators: [Core.multibuffering]DescriptorAllocator = @splat(.{});
-    for (&dynamicsets, &dynamicallocators) |*set, *dynamicdescriptorallocator| {
-        dynamicdescriptorallocator.* = .init(device.handle, 1000, &dynamicratios, allocator);
-        set.* = dynamicdescriptorallocator.allocate(
+    var sets: [Core.multibuffering]c.VkDescriptorSet = @splat(undefined);
+    var allocators: [Core.multibuffering]DescriptorAllocator = @splat(.{});
+    for (&sets, &allocators) |*set, *descriptorallocator| {
+        descriptorallocator.* = .init(device.handle, 1000, &ratios, allocator);
+        set.* = descriptorallocator.allocate(
             allocator,
             device.handle,
             pipelinemanager.descriptorlayout,
@@ -46,17 +34,16 @@ pub fn init(allocator: std.mem.Allocator, device: Device, pipelinemanager: Pipel
     }
     return .{
         // .staticallocator = staticallocator,
-        .dynamicallocators = dynamicallocators,
+        .allocators = allocators,
         // .staticset = staticset,
-        .dynamicsets = dynamicsets,
+        .sets = sets,
         .allocator = allocator,
         .device = device.handle,
     };
 }
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator, device: Device) void {
-    // self.staticallocator.deinit(device.handle, allocator);
-    for (&self.dynamicallocators) |*dynamicallocator| dynamicallocator.deinit(device.handle, allocator);
+    for (&self.allocators) |*dynamicallocator| dynamicallocator.deinit(device.handle, allocator);
 }
 
 pub fn writeStaticSet(
@@ -100,5 +87,5 @@ pub fn writeDynamicSet(
         0,
         c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
     );
-    writer.updateSet(self.device, self.dynamicsets[frame]);
+    writer.updateSet(self.device, self.sets[frame]);
 }

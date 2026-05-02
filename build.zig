@@ -63,6 +63,8 @@ pub fn build(b: *Build) !void {
     addSlangShader(b, matrisen, shaders_step, "pbr.slang", "fragmentMain", "fragment");
     addSlangShader(b, matrisen, shaders_step, "draw.slang", "drawMain", "compute");
     addSlangShader(b, matrisen, shaders_step, "terrain.slang", "terain", "compute");
+    addSlangShader(b, matrisen, shaders_step, "vectorgfx.slang", "slugVertex", "vertex");
+    addSlangShader(b, matrisen, shaders_step, "vectorgfx.slang", "slugFragment", "fragment");
 
     b.installArtifact(exe);
 

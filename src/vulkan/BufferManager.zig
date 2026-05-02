@@ -266,7 +266,7 @@ pub fn updateScene(
 
 pub fn initEmptyMesh(self: *Self, core: *Core) void {
     const vertex_count = 256 * 256;
-    const index_count = 255 * 255 * 6;
+    const index_count = 255 * 255 * 6; // two triangles per rectangle: 2 * 3 = 6
     const v_size = vertex_count * @sizeOf(Vertex);
     const i_size = index_count * @sizeOf(u32);
 
