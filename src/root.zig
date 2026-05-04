@@ -1,5 +1,6 @@
 pub const clibs = @import("clibs/clibs.zig").libs;
 pub const linalg = @import("linalg.zig");
+pub const config = @import("config");
 
 pub const Swapchain = @import("vulkan/Swapchain.zig");
 pub const PipelineBuilder = @import("vulkan/PipelineBuilder.zig");

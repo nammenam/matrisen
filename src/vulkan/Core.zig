@@ -11,6 +11,7 @@ const log = std.log.scoped(.core);
 const debug = @import("debug.zig");
 const linalg = @import("../linalg.zig");
 const c = @import("../clibs/clibs.zig").libs;
+const config = @import("config");
 
 const Quat = linalg.Quat(f32);
 const Vec3 = linalg.Vec3(f32);
@@ -227,7 +228,6 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     };
 
     const count_offset = @as(u64, self.currentframe) * @sizeOf(u32);
-    const indirect_offset = @as(u64, self.currentframe) * 10000 * @sizeOf(c.VkDrawIndirectCommand);
     c.vkCmdFillBuffer(cmd, self.buffermanager.countbuffer.buffer, count_offset, @sizeOf(u32), 0);
 
     const fill_barrier = c.VkBufferMemoryBarrier{
@@ -267,11 +267,12 @@ pub fn nextFrame(self: *Self, window: *Window) void {
         0,
         null,
     );
-    // FIX no hardcode number of threads
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.terrainpipeline);
     c.vkCmdDispatch(cmd, 16, 16, 1); // 16*16 = 256 threads each axis
+
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.drawcmdpipeline);
-    c.vkCmdDispatch(cmd, 1, 1, 1); // Dispatch threads based on object count
+    const dispatch_x = (self.buffermanager.object_offset + 63) / 64;
+    c.vkCmdDispatch(cmd, dispatch_x, 1, 1);
     // ==========================================================
     // 4. MEMORY BARRIER (Block graphics until compute is done)
     // ==========================================================
@@ -298,8 +299,11 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     // 5. GRAPHICS PASS (Dynamic Rendering)
     // ==========================================================
     frame.beginGraphicsPass(self);
-
-    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.rasterpipeline);
+    if (config.meshshading) {
+        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.meshrasterpipeline);
+    } else {
+        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.rasterpipeline);
+    }
     c.vkCmdBindDescriptorSets(
         cmd,
         c.VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -310,16 +314,31 @@ pub fn nextFrame(self: *Self, window: *Window) void {
         0,
         null,
     );
-
-    c.vkCmdDrawIndirectCount(
-        cmd,
-        self.buffermanager.indirectbuffer.buffer,
-        indirect_offset,
-        self.buffermanager.countbuffer.buffer,
-        count_offset,
-        10000,
-        @sizeOf(c.VkDrawIndirectCommand),
-    );
+    if (config.meshshading) {
+        const indirect_offset = @as(u64, self.currentframe) *
+            BufferManager.MAX_OBJECTS * @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT);
+        self.device.vkCmdDrawMeshTasksIndirectCountEXT.?(
+            cmd,
+            self.buffermanager.indirectbuffer.buffer,
+            indirect_offset,
+            self.buffermanager.countbuffer.buffer,
+            count_offset,
+            BufferManager.MAX_OBJECTS,
+            @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT),
+        );
+    } else {
+        const indirect_offset = @as(u64, self.currentframe) *
+            BufferManager.MAX_OBJECTS * @sizeOf(c.VkDrawIndirectCommand);
+        c.vkCmdDrawIndirectCount(
+            cmd,
+            self.buffermanager.indirectbuffer.buffer,
+            indirect_offset,
+            self.buffermanager.countbuffer.buffer,
+            count_offset,
+            BufferManager.MAX_OBJECTS,
+            @sizeOf(c.VkDrawIndirectCommand),
+        );
+    }
     frame.endGraphicsPass(self);
     // =============================================================
     // SUBMIT

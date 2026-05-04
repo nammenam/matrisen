@@ -13,7 +13,7 @@ present_queue: c.VkQueue,
 compute_queue: c.VkQueue,
 transfer_queue: c.VkQueue,
 
-vkCmdDrawMeshTasksEXT: c.PFN_vkCmdDrawMeshTasksIndirectCountEXT,
+vkCmdDrawMeshTasksIndirectCountEXT: c.PFN_vkCmdDrawMeshTasksIndirectCountEXT,
 
 pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) !Self {
     const alloc_cb: ?*c.VkAllocationCallbacks = null;
@@ -136,7 +136,7 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) !Self {
         .present_queue = present_queue,
         .compute_queue = compute_queue,
         .transfer_queue = transfer_queue,
-        .vkCmdDrawMeshTasksEXT = procAddr, // Store it in the struct instance
+        .vkCmdDrawMeshTasksIndirectCountEXT = procAddr, // Store it in the struct instance
     };
 }
 

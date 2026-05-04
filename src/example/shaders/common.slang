@@ -45,8 +45,15 @@ public struct SceneData {
   public Transform *transforms;
   public Transform *cpu_transforms;
   public Mesh *meshes;
+#if USE_MESH_SHADING
+  public VkDrawMeshTasksIndirectCommandEXT *indirectCommands;
+  public uint *drawCount;
+  public uint *drawMap;
+#else
   public VkDrawIndirectCommand *indirectCommands;
   public uint *drawCount;
+  public uint *drawMap;
+#endif  // other
   public uint totalObjects;
   public uint _pad;
 };

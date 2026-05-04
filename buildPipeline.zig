@@ -23,6 +23,7 @@ pub const PipelineDef = struct {
     depth_test: bool = true,
     depth_write: bool = true,
     depth_op: []const u8 = "c.VK_COMPARE_OP_LESS",
+    meshshading: bool = false,
 };
 
 fn compileSlang(
@@ -32,11 +33,17 @@ fn compileSlang(
     filename: []const u8,
     entry: []const u8,
     stage: []const u8,
+    meshshading: bool,
 ) *std.Build.Module {
     const shader_src = b.path(b.fmt("{s}/{s}", .{ shaderpath, filename }));
 
     const cmd = b.addSystemCommand(&.{"slangc"});
     cmd.addFileArg(shader_src);
+    if (meshshading) {
+        cmd.addArg("-DUSE_MESH_SHADING=1");
+    } else {
+        cmd.addArg("-DUSE_MESH_SHADING=0");
+    }
     cmd.addArgs(&.{ "-target", "spirv", "-fvk-use-scalar-layout" });
     cmd.addArgs(&.{ "-entry", entry, "-stage", stage });
     cmd.addArg("-o");
@@ -209,22 +216,21 @@ pub fn addPipeline(
     // Fix: inject matrisen so generated code can @import("matrisen")
     pipeline_mod.addImport("matrisen", matrisen);
 
-    // Fix: reuse cached shader modules to avoid duplicate SPIRV compilation
     if (def.vertex) |v| pipeline_mod.addImport(
         b.fmt("{s}_module", .{v}),
-        compileSlang(b, shaders_step, shaderpath, def.shader_filename, v, "vertex"),
+        compileSlang(b, shaders_step, shaderpath, def.shader_filename, v, "vertex", def.meshshading),
     );
     if (def.fragment) |f| pipeline_mod.addImport(
         b.fmt("{s}_module", .{f}),
-        compileSlang(b, shaders_step, shaderpath, def.shader_filename, f, "fragment"),
+        compileSlang(b, shaders_step, shaderpath, def.shader_filename, f, "fragment", def.meshshading),
     );
     if (def.mesh) |m| pipeline_mod.addImport(
         b.fmt("{s}_module", .{m}),
-        compileSlang(b, shaders_step, shaderpath, def.shader_filename, m, "mesh"),
+        compileSlang(b, shaders_step, shaderpath, def.shader_filename, m, "mesh", def.meshshading),
     );
     if (def.compute) |cs| pipeline_mod.addImport(
         b.fmt("{s}_module", .{cs}),
-        compileSlang(b, shaders_step, shaderpath, def.shader_filename, cs, "compute"),
+        compileSlang(b, shaders_step, shaderpath, def.shader_filename, cs, "compute", def.meshshading),
     );
 
     matrisen.addImport(def.name, pipeline_mod);

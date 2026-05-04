@@ -11,26 +11,15 @@ pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
 
     const options = b.addOptions();
-    const version_opt = b.option(
-        []const u8,
-        "version",
-        "overrides the version reported",
-    ) orelse v: {
-        var code: u8 = undefined;
-        const git_describe = b.runAllowFail(&[_][]const u8{
-            "git", "describe", "--tags",
-        }, &code, .Ignore) catch {
-            break :v "<unk>";
-        };
-        break :v std.mem.trim(u8, git_describe, " \n\r");
-    };
-    options.addOption([]const u8, "version", version_opt);
+    const enable_meshshading = b.option(bool, "meshshading", "Enable meshshading") orelse false;
+    options.addOption(bool, "meshshading", enable_meshshading);
 
     const matrisen = b.createModule(.{
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path("src/root.zig"),
     });
+    matrisen.addOptions("config", options);
 
     const exe = b.addExecutable(.{
         .name = "exe",
@@ -77,6 +66,7 @@ pub fn build(b: *Build) !void {
         .name = "drawcmdpipeline",
         .shader_filename = "drawcmd.slang",
         .compute = "drawcmdMain",
+        .meshshading = enable_meshshading,
     });
 
     // 2. The Default 3D Pipeline (Vertex + Fragment)
@@ -100,6 +90,7 @@ pub fn build(b: *Build) !void {
         .polygon_mode = "c.VK_POLYGON_MODE_FILL",
         .depth_test = true,
         .multisampling = .msam4,
+        .meshshading = enable_meshshading,
     });
 
     pipelinegen.addPipeline(b, matrisen, shaders_step, shaderpath, .{

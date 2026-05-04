@@ -99,7 +99,8 @@ pub fn endFrame(self: *Self, core: *const Core) void {
     const signal_info = c.VkSemaphoreSubmitInfo{
         .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
         .semaphore = core.swapchain.semaphores[self.swapchainindex],
-        .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        // .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        .stageMask = c.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
     };
 
     const submit = c.VkSubmitInfo2{

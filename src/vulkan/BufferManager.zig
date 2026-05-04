@@ -2,6 +2,7 @@ const std = @import("std");
 const linalg = @import("../linalg.zig");
 const debug = @import("debug.zig");
 const c = @import("../clibs/clibs.zig").libs;
+const config = @import("config");
 const Core = @import("Core.zig");
 const BufferAllocator = @import("BufferAllocator.zig");
 const DescriptorManager = @import("DescriptorManager.zig");
@@ -46,7 +47,8 @@ pub const SceneData = extern struct {
     meshes: u64, // array of Mesh
     indirectCommands: u64, // address to the indirect struct
     drawCount: u64, // address to a single u32
-
+    drawMap: u64,
+    // other
     totalObjects: u32,
     _pad: u32 = 0,
 };
@@ -55,7 +57,7 @@ const Self = @This();
 
 // Limits for the engine
 const MAX_GEOMETRY_BYTES = 64 * 1024 * 1024; // 64 MB for Verts/Indices
-const MAX_OBJECTS = 10000;
+pub const MAX_OBJECTS = 10000;
 const CPU_TRANSFORMS = 100;
 
 // The Giant Geometry Buffers
@@ -78,6 +80,8 @@ indirectbuffer: AllocatedBuffer = undefined,
 indirectbufferaddr: u64 = undefined,
 countbuffer: AllocatedBuffer = undefined,
 countbufferaddr: u64 = undefined,
+drawmapbuffer: AllocatedBuffer = undefined,
+drawmapbufferaddr: u64 = undefined,
 
 // Uniforms
 scenebuffers: [Core.multibuffering]AllocatedBuffer = @splat(undefined),
@@ -95,6 +99,7 @@ pub fn destroyBuffers(self: *Self, bufferallocator: *BufferAllocator) void {
     bufferallocator.destroy(self.cpuside_transformbuffer);
     bufferallocator.destroy(self.indirectbuffer);
     bufferallocator.destroy(self.countbuffer);
+    bufferallocator.destroy(self.drawmapbuffer);
 }
 
 // Initializes the memory arenas with MULTI-BUFFERING sizing
@@ -130,16 +135,31 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
-    self.indirectbuffer = allocator.create(
-        @sizeOf(c.VkDrawIndirectCommand) * MAX_OBJECTS * mb, // <--- Ring Buffered!
-        c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-            c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        c.VMA_MEMORY_USAGE_GPU_ONLY,
-    );
+    if (config.meshshading) {
+        self.indirectbuffer = allocator.create(
+            @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT) * MAX_OBJECTS * mb, // <--- Ring Buffered!
+            c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            c.VMA_MEMORY_USAGE_GPU_ONLY,
+        );
+    } else {
+        self.indirectbuffer = allocator.create(
+            @sizeOf(c.VkDrawIndirectCommand) * MAX_OBJECTS * mb, // <--- Ring Buffered!
+            c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            c.VMA_MEMORY_USAGE_GPU_ONLY,
+        );
+    }
     self.countbuffer = allocator.create(
         @sizeOf(u32) * mb, // <--- Ring Buffered!
         c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
             c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        c.VMA_MEMORY_USAGE_GPU_ONLY,
+    );
+
+    self.drawmapbuffer = allocator.create(
+        @sizeOf(u32) * MAX_OBJECTS * mb, // <--- Ring Buffered! (One u32 per potential object)
+        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
 
@@ -164,7 +184,7 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     self.meshbufferaddr = core.bufferallocator.getBufferAddress(self.meshbuffer);
     self.indirectbufferaddr = core.bufferallocator.getBufferAddress(self.indirectbuffer);
     self.countbufferaddr = core.bufferallocator.getBufferAddress(self.countbuffer);
-
+    self.drawmapbufferaddr = core.bufferallocator.getBufferAddress(self.drawmapbuffer);
     // upload base address to prevent crash when no object are loaded
     const base_v_addr = core.bufferallocator.getBufferAddress(self.globalvertexbuffer);
     const base_i_addr = core.bufferallocator.getBufferAddress(self.globalindexbuffer);
@@ -249,7 +269,7 @@ pub fn updateScene(
     const b_indir = self.indirectbufferaddr;
     const b_count = self.countbufferaddr;
     const b_cpu_trans = self.cpuside_transformbufferaddr;
-
+    const b_drawmap = self.drawmapbufferaddr;
     // Calculate byte offsets for this specific frame
     const frame_u64 = @as(u64, frame_index);
     _ = time;
@@ -257,10 +277,16 @@ pub fn updateScene(
     // Inject the offset pointers directly into the shader!
     ptr.transforms = b_trans + (frame_u64 * MAX_OBJECTS * @sizeOf(Transform));
     ptr.cpu_transforms = b_cpu_trans + (frame_u64 * CPU_TRANSFORMS * @sizeOf(Transform));
-    ptr.indirectCommands = b_indir + (frame_u64 * MAX_OBJECTS * @sizeOf(c.VkDrawIndirectCommand));
+    if (config.meshshading) {
+        ptr.indirectCommands = b_indir +
+            (frame_u64 * MAX_OBJECTS * @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT));
+    } else {
+        ptr.indirectCommands = b_indir +
+            (frame_u64 * MAX_OBJECTS * @sizeOf(c.VkDrawIndirectCommand));
+    }
     ptr.drawCount = b_count + (frame_u64 * @sizeOf(u32));
     ptr.meshes = b_meshes;
-
+    ptr.drawMap = b_drawmap + (frame_u64 * MAX_OBJECTS * @sizeOf(u32));
     ptr.totalObjects = self.object_offset;
 }
 

@@ -1,6 +1,5 @@
 import common;
 
-
 struct AssembledVertex {
   float4 position : SV_Position;
   float3 normal : NORMAL;
