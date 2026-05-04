@@ -70,7 +70,7 @@ float terrainHeight(uint x, uint y, uint gridSize, float worldScale,
 
 [shader("compute")]
 [numthreads(16, 16, 1)]
-void terain(uint3 threadId: SV_DispatchThreadID) {
+void terrainMain(uint3 threadId: SV_DispatchThreadID) {
   const uint GRID_SIZE = 256;
   const float WORLD_SCALE = 1.0;
   const float HEIGHT_SCALE = 128.0;

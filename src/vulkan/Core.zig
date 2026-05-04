@@ -80,7 +80,9 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
     const instance: Instance = .init(initallocator, allocationcallbacks);
     const surface = window.createSurface(instance, allocationcallbacks);
     const physicaldevice: PhysicalDevice = .select(initallocator, instance.handle, surface);
-    const device: Device = .init(initallocator, physicaldevice);
+    const device: Device = Device.init(initallocator, physicaldevice) catch {
+        @panic("");
+    };
     const gpuallocator = makeGpuAllocator(physicaldevice.handle, device.handle, instance.handle);
 
     var windowextent: c.VkExtent2D = .{ .width = 0, .height = 0 };
@@ -212,6 +214,7 @@ fn setRenderScale(inputextent: c.VkExtent2D, scale: f32) c.VkExtent2D {
 }
 
 pub fn nextFrame(self: *Self, window: *Window) void {
+    // FIX clunky function right now make DRY
     var frame = self.framecontexts[self.currentframe];
     const cmd = frame.command_buffer;
 
@@ -265,9 +268,9 @@ pub fn nextFrame(self: *Self, window: *Window) void {
         null,
     );
     // FIX no hardcode number of threads
-    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.terainpipeline);
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.terrainpipeline);
     c.vkCmdDispatch(cmd, 16, 16, 1); // 16*16 = 256 threads each axis
-    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.computepipeline);
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.drawcmdpipeline);
     c.vkCmdDispatch(cmd, 1, 1, 1); // Dispatch threads based on object count
     // ==========================================================
     // 4. MEMORY BARRIER (Block graphics until compute is done)
@@ -296,7 +299,7 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     // ==========================================================
     frame.beginGraphicsPass(self);
 
-    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.defaultpipeline);
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.rasterpipeline);
     c.vkCmdBindDescriptorSets(
         cmd,
         c.VK_PIPELINE_BIND_POINT_GRAPHICS,

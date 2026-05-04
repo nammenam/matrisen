@@ -7,6 +7,12 @@ public struct VkDrawIndirectCommand {
   public uint firstInstance;
 };
 
+public struct VkDrawMeshTasksIndirectCommandEXT {
+  public uint groupCountX;
+  public uint groupCountY;
+  public uint groupCountZ;
+}
+
 public struct Vertex {
   public float3 position;
   public float uv_x;

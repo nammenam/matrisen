@@ -1,19 +1,23 @@
 const std = @import("std");
 const c = @import("../clibs/clibs.zig").libs;
-const defaultpipline = @import("pipelines/default.zig");
-const computepipeline_mod = @import("pipelines/compute.zig");
-const terainpipeline_mod = @import("pipelines/terain.zig");
 const checkVkPanic = @import("debug.zig").checkVkPanic;
-const Core = @import("Core.zig");
 const DescriptorLayoutBuilder = @import("DescriptorLayoutBuilder.zig");
+
+// Import the auto-generated pipelines from build.zig
+const Rasterpipeline = @import("rasterpipeline");
+const Meshrasterpipeline = @import("rasterpipeline_mesh");
+const Drawcmdpipeline = @import("drawcmdpipeline");
+const Terrainpipeline = @import("terrainpipeline");
 
 const Self = @This();
 
 sharedpipelinelayout: c.VkPipelineLayout,
 descriptorlayout: c.VkDescriptorSetLayout,
-defaultpipeline: c.VkPipeline,
-computepipeline: c.VkPipeline,
-terainpipeline: c.VkPipeline,
+
+rasterpipeline: c.VkPipeline,
+meshrasterpipeline: c.VkPipeline,
+drawcmdpipeline: c.VkPipeline,
+terrainpipeline: c.VkPipeline,
 
 pub fn init(allocator: std.mem.Allocator, device: c.VkDevice, allocationcallbacks: ?*c.VkAllocationCallbacks) Self {
     var descriptorlayout: c.VkDescriptorSetLayout = undefined;
@@ -27,7 +31,8 @@ pub fn init(allocator: std.mem.Allocator, device: c.VkDevice, allocationcallback
         // Shared layout: Visible to Compute, Vertex, and Fragment!
         descriptorlayout = builder.build(
             device,
-            c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT | c.VK_SHADER_STAGE_COMPUTE_BIT,
+            c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT | c.VK_SHADER_STAGE_COMPUTE_BIT |
+                c.VK_SHADER_STAGE_MESH_BIT_EXT,
             null,
             0,
         );
@@ -46,14 +51,16 @@ pub fn init(allocator: std.mem.Allocator, device: c.VkDevice, allocationcallback
     checkVkPanic(c.vkCreatePipelineLayout(device, &layoutinfo, null, &sharedpipelinelayout));
 
     // Delegate pipeline creation to their respective files
-    const pipeline = defaultpipline.init(device, sharedpipelinelayout, allocationcallbacks);
-    const computepipe = computepipeline_mod.init(device, sharedpipelinelayout, allocationcallbacks);
-    const terainpipe = terainpipeline_mod.init(device, sharedpipelinelayout, allocationcallbacks);
+    const rasterpipeline = Rasterpipeline.init(device, sharedpipelinelayout, allocationcallbacks);
+    const meshrasterpipeline = Meshrasterpipeline.init(device, sharedpipelinelayout, allocationcallbacks);
+    const drawcmdpipeline = Drawcmdpipeline.init(device, sharedpipelinelayout, allocationcallbacks);
+    const terrainpipeline = Terrainpipeline.init(device, sharedpipelinelayout, allocationcallbacks);
 
     return .{
-        .defaultpipeline = pipeline,
-        .computepipeline = computepipe,
-        .terainpipeline = terainpipe,
+        .rasterpipeline = rasterpipeline,
+        .meshrasterpipeline = meshrasterpipeline,
+        .drawcmdpipeline = drawcmdpipeline,
+        .terrainpipeline = terrainpipeline,
         .sharedpipelinelayout = sharedpipelinelayout,
         .descriptorlayout = descriptorlayout,
     };
@@ -62,7 +69,8 @@ pub fn init(allocator: std.mem.Allocator, device: c.VkDevice, allocationcallback
 pub fn deinit(self: *Self, device: c.VkDevice, allocationcallbacks: ?*c.VkAllocationCallbacks) void {
     c.vkDestroyDescriptorSetLayout(device, self.descriptorlayout, allocationcallbacks);
     c.vkDestroyPipelineLayout(device, self.sharedpipelinelayout, allocationcallbacks);
-    c.vkDestroyPipeline(device, self.defaultpipeline, allocationcallbacks);
-    c.vkDestroyPipeline(device, self.computepipeline, allocationcallbacks);
-    c.vkDestroyPipeline(device, self.terainpipeline, allocationcallbacks);
+    c.vkDestroyPipeline(device, self.rasterpipeline, allocationcallbacks);
+    c.vkDestroyPipeline(device, self.meshrasterpipeline, allocationcallbacks);
+    c.vkDestroyPipeline(device, self.drawcmdpipeline, allocationcallbacks);
+    c.vkDestroyPipeline(device, self.terrainpipeline, allocationcallbacks);
 }

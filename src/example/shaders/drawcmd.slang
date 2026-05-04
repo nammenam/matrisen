@@ -2,7 +2,7 @@ import common;
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void drawMain(uint3 threadId: SV_DispatchThreadID) {
+void drawcmdMain(uint3 threadId: SV_DispatchThreadID) {
   uint objIndex = threadId.x;
 
   if (objIndex >= scene.totalObjects) {

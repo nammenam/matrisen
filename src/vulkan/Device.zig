@@ -5,8 +5,6 @@ const log = std.log.scoped(.device);
 const required_device_extensions: []const [*c]const u8 = &.{ "VK_KHR_swapchain", "VK_EXT_mesh_shader" };
 const PhysicalDevice = @import("PhysicalDevice.zig");
 
-pub var vkCmdDrawMeshTasksEXT: c.PFN_vkCmdDrawMeshTasksEXT = null;
-
 const Self = @This();
 
 handle: c.VkDevice,
@@ -15,39 +13,50 @@ present_queue: c.VkQueue,
 compute_queue: c.VkQueue,
 transfer_queue: c.VkQueue,
 
-pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) Self {
+vkCmdDrawMeshTasksEXT: c.PFN_vkCmdDrawMeshTasksIndirectCountEXT,
+
+pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) !Self {
     const alloc_cb: ?*c.VkAllocationCallbacks = null;
 
-    // var meshshading: c.VkPhysicalDeviceMeshShaderFeaturesEXT = .{
-    //     .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT,
-    //     .taskShader = c.VK_TRUE,
-    //     .meshShader = c.VK_TRUE,
-    // };
-    // var features14: c.VkPhysicalDeviceVulkan14Features = .{
-    //     .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
-    //     .dynamicRenderingLocalRead = c.VK_TRUE,
-    // };
+    var meshshading: c.VkPhysicalDeviceMeshShaderFeaturesEXT = .{
+        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT,
+        .taskShader = c.VK_TRUE,
+        .meshShader = c.VK_TRUE,
+        .pNext = null,
+    };
+
+    // 2. Vulkan 1.4 Core Features
+    var features14: c.VkPhysicalDeviceVulkan14Features = .{
+        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
+        .pNext = &meshshading, // Chain Mesh Shaders here
+        .dynamicRenderingLocalRead = c.VK_TRUE,
+    };
+
+    // 3. Vulkan 1.3 Core Features
     var features13: c.VkPhysicalDeviceVulkan13Features = .{
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-        // .pNext = &features14,
+        .pNext = &features14, // Chain Vulkan 1.4 here
         .dynamicRendering = c.VK_TRUE,
         .synchronization2 = c.VK_TRUE,
     };
 
+    // 4. Vulkan 1.2 Core Features
     var features12: c.VkPhysicalDeviceVulkan12Features = .{
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .pNext = &features13, // Chain Vulkan 1.3 here
         .bufferDeviceAddress = c.VK_TRUE,
         .descriptorIndexing = c.VK_TRUE,
         .drawIndirectCount = c.VK_TRUE,
-        .pNext = &features13,
     };
 
+    // 5. Shader Draw Parameters (Needed for multidraw indirect often)
     var shader_draw_parameters_features: c.VkPhysicalDeviceShaderDrawParametersFeatures = .{
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
+        .pNext = &features12, // Chain Vulkan 1.2 here
         .shaderDrawParameters = c.VK_TRUE,
-        .pNext = &features12,
     };
 
+    // 6. Base Features 2 (This goes into device_info.pNext)
     var deviceFeatures2: c.VkPhysicalDeviceFeatures2 = .{
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &shader_draw_parameters_features,
@@ -58,6 +67,7 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) Self {
     };
 
     var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo){};
+    defer queue_create_infos.deinit(alloc);
     const queue_priorities: f32 = 1.0;
     var queue_family_set = std.AutoArrayHashMapUnmanaged(u32, void){};
     queue_family_set.put(alloc, physical_device.graphics_queue_family, {}) catch {
@@ -77,20 +87,13 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) Self {
         @panic("");
     };
     var qfi_iter = queue_family_set.iterator();
-    queue_create_infos.ensureTotalCapacity(alloc, queue_family_set.count()) catch {
-        log.err("failed to alloc", .{});
-        @panic("");
-    };
     while (qfi_iter.next()) |qfi| {
-        queue_create_infos.append(alloc, std.mem.zeroInit(c.VkDeviceQueueCreateInfo, .{
+        try queue_create_infos.append(alloc, c.VkDeviceQueueCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
             .queueFamilyIndex = qfi.key_ptr.*,
             .queueCount = 1,
             .pQueuePriorities = &queue_priorities,
-        })) catch {
-            log.err("failed to append", .{});
-            @panic("");
-        };
+        });
     }
 
     const device_info: c.VkDeviceCreateInfo = .{
@@ -117,20 +120,29 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) Self {
     var transfer_queue: c.VkQueue = undefined;
     c.vkGetDeviceQueue(device, physical_device.transfer_queue_family, 0, &transfer_queue);
 
-    // TODO fix this ugly ahh pointer thing
-    const procAddr: c.PFN_vkCmdDrawMeshTasksEXT = @ptrCast(c.vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksEXT"));
+    const procAddr: c.PFN_vkCmdDrawMeshTasksIndirectCountEXT = @ptrCast(
+        c.vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksIndirectCountEXT"),
+    );
     if (procAddr == null) {
-        @panic("");
+        log.err("Failed to load vkCmdDrawMeshTasksIndirectCountEXT", .{});
+        return error.ExtensionFunctionNotLoaded;
     }
-    vkCmdDrawMeshTasksEXT = procAddr;
+
     log.info("created logical device", .{});
+
     return .{
         .handle = device,
         .graphics_queue = graphics_queue,
         .present_queue = present_queue,
         .compute_queue = compute_queue,
         .transfer_queue = transfer_queue,
+        .vkCmdDrawMeshTasksEXT = procAddr, // Store it in the struct instance
     };
 }
 
-pub fn deinit() void {}
+// 5. Implemented proper cleanup
+pub fn deinit(self: *Self) void {
+    if (self.handle != null) {
+        c.vkDestroyDevice(self.handle, null);
+    }
+}
