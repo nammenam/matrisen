@@ -5,10 +5,11 @@ const log = std.log.scoped(.framecontext);
 const Core = @import("Core.zig");
 const Device = @import("Device.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
-const DescriptorAllocator = @import("DescriptorAllocator.zig");
 
 const Self = @This();
 
+handle: c.VkSwapchainKHR = null,
+device: Device = null,
 acquiresemaphore: c.VkSemaphore = null, // Signaled by Swapchain when image is ready
 fence: c.VkFence = null, // Signaled by GPU when drawing is done
 command_pool: c.VkCommandPool = null,
@@ -45,7 +46,7 @@ pub fn init(
         &self.acquiresemaphore,
     ));
     debug.checkVkPanic(c.vkCreateFence(device.handle, &fence_ci, allocationcallbacks, &self.fence));
-
+    self.device = device;
     log.info("Created framecontext", .{});
 }
 
@@ -55,12 +56,12 @@ pub fn deinit(self: *Self, device: Device, allocationcallbacks: ?*c.VkAllocation
     c.vkDestroySemaphore(device.handle, self.acquiresemaphore, allocationcallbacks);
 }
 
-pub fn beginFrame(self: *Self, core: *const Core) !void {
+pub fn beginFrame(self: *Self) !void {
     const timeout: u64 = 4_000_000_000; // 4 seconds
-    debug.checkVkPanic(c.vkWaitForFences(core.device.handle, 1, &self.fence, c.VK_TRUE, timeout));
+    debug.checkVkPanic(c.vkWaitForFences(self.device.handle, 1, &self.fence, c.VK_TRUE, timeout));
     const e = c.vkAcquireNextImageKHR(
-        core.device.handle,
-        core.swapchain.handle,
+        self.device.handle,
+        self.swapchain,
         timeout,
         self.acquiresemaphore,
         null,
@@ -70,7 +71,7 @@ pub fn beginFrame(self: *Self, core: *const Core) !void {
         return error.SwapchainOutOfDate;
     }
 
-    debug.checkVkPanic(c.vkResetFences(core.device.handle, 1, &self.fence));
+    debug.checkVkPanic(c.vkResetFences(self.device.handle, 1, &self.fence));
     debug.checkVkPanic(c.vkResetCommandBuffer(self.command_buffer, 0));
 
     const cmd_begin_info: c.VkCommandBufferBeginInfo = .{
@@ -80,7 +81,7 @@ pub fn beginFrame(self: *Self, core: *const Core) !void {
     debug.checkVkPanic(c.vkBeginCommandBuffer(self.command_buffer, &cmd_begin_info));
 }
 
-pub fn endFrame(self: *Self, core: *const Core) void {
+pub fn endFrame(self: *Self) void {
     const cmd = self.command_buffer;
 
     debug.checkVkPanic(c.vkEndCommandBuffer(cmd));
@@ -93,14 +94,14 @@ pub fn endFrame(self: *Self, core: *const Core) void {
     const wait_info = c.VkSemaphoreSubmitInfo{
         .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
         .semaphore = self.acquiresemaphore, // Keep this!
-        .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        // .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        .stageMask = c.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
     };
 
     const signal_info = c.VkSemaphoreSubmitInfo{
         .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .semaphore = core.swapchain.semaphores[self.swapchainindex],
-        // .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-        .stageMask = c.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .semaphore = self.swapchain.semaphores[self.swapchainindex],
+        .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
     };
 
     const submit = c.VkSubmitInfo2{
@@ -113,18 +114,18 @@ pub fn endFrame(self: *Self, core: *const Core) void {
         .pSignalSemaphoreInfos = &signal_info,
     };
 
-    debug.checkVkPanic(c.vkQueueSubmit2(core.device.graphics_queue, 1, &submit, self.fence));
+    debug.checkVkPanic(c.vkQueueSubmit2(self.device.graphics_queue, 1, &submit, self.fence));
 
     const present_info = c.VkPresentInfoKHR{
         .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &core.swapchain.semaphores[self.swapchainindex],
+        .pWaitSemaphores = &self.swapchain.semaphores[self.swapchainindex],
         .swapchainCount = 1,
-        .pSwapchains = &core.swapchain.handle,
+        .pSwapchains = &self.swapchain,
         .pImageIndices = &self.swapchainindex,
     };
 
-    _ = c.vkQueuePresentKHR(core.device.graphics_queue, &present_info);
+    _ = c.vkQueuePresentKHR(self.device.graphics_queue, &present_info);
 }
 
 pub fn beginGraphicsPass(self: *Self, core: *Core) void {

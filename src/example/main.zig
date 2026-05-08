@@ -43,5 +43,6 @@ pub fn main() !void {
 
     try engine.buffermanager.initEngineBuffers(&engine, &engine.descriptormanager);
     engine.buffermanager.initEmptyMesh(&engine);
+    engine.buffermanager.testUI(&engine);
     loop(&engine, &window);
 }

@@ -8,6 +8,7 @@ const Rasterpipeline = @import("rasterpipeline");
 const Meshrasterpipeline = @import("rasterpipeline_mesh");
 const Drawcmdpipeline = @import("drawcmdpipeline");
 const Terrainpipeline = @import("terrainpipeline");
+const UIpipeline = @import("vectorgfxpipeline");
 
 const Self = @This();
 
@@ -17,6 +18,7 @@ descriptorlayout: c.VkDescriptorSetLayout,
 rasterpipeline: c.VkPipeline,
 meshrasterpipeline: c.VkPipeline,
 drawcmdpipeline: c.VkPipeline,
+uipipeline: c.VkPipeline,
 terrainpipeline: c.VkPipeline,
 
 pub fn init(allocator: std.mem.Allocator, device: c.VkDevice, allocationcallbacks: ?*c.VkAllocationCallbacks) Self {
@@ -55,12 +57,14 @@ pub fn init(allocator: std.mem.Allocator, device: c.VkDevice, allocationcallback
     const meshrasterpipeline = Meshrasterpipeline.init(device, sharedpipelinelayout, allocationcallbacks);
     const drawcmdpipeline = Drawcmdpipeline.init(device, sharedpipelinelayout, allocationcallbacks);
     const terrainpipeline = Terrainpipeline.init(device, sharedpipelinelayout, allocationcallbacks);
+    const uipipeline = UIpipeline.init(device, sharedpipelinelayout, allocationcallbacks);
 
     return .{
         .rasterpipeline = rasterpipeline,
         .meshrasterpipeline = meshrasterpipeline,
         .drawcmdpipeline = drawcmdpipeline,
         .terrainpipeline = terrainpipeline,
+        .uipipeline = uipipeline,
         .sharedpipelinelayout = sharedpipelinelayout,
         .descriptorlayout = descriptorlayout,
     };

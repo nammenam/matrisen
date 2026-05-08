@@ -8,5 +8,6 @@ useful graphics in useful formats for plotting, illustrating and animation tasks
 
 ## Contents / Navigtaion Guide
 
-`  - src`
-`  - docs`
+`  - src`
+
+`  - docs`

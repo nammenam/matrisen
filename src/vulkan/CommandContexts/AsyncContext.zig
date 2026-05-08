@@ -8,6 +8,8 @@ const PhysicalDevice = @import("PhysicalDevice.zig");
 
 const Self = @This();
 
+device: Device,
+allocationcallbacks: c.VkAllocationCallbacks,
 fence: c.VkFence,
 commandpool: c.VkCommandPool,
 commandbuffer: c.VkCommandBuffer,
@@ -52,19 +54,21 @@ pub fn init(device: Device, physicaldevice: PhysicalDevice, allocationcallbacks:
     ));
     log.info("Created asynccontext", .{});
     return .{
+        .device = device,
+        .allocationcallbacks = allocationcallbacks,
         .fence = fence,
         .commandpool = commandpool,
         .commandbuffer = commandbuffer,
     };
 }
 
-pub fn deinit(self: *Self, device: Device, allocationcallbacks: ?*c.VkAllocationCallbacks) void {
-    c.vkDestroyCommandPool(device.handle, self.commandpool, allocationcallbacks);
-    c.vkDestroyFence(device.handle, self.fence, allocationcallbacks);
+pub fn deinit(self: *Self) void {
+    c.vkDestroyCommandPool(self.device.handle, self.commandpool, self.allocationcallbacks);
+    c.vkDestroyFence(self.device.handle, self.fence, self.allocationcallbacks);
 }
 
-pub fn submitBegin(self: *Self, core: *Core) void {
-    debug.checkVk(c.vkResetFences(core.device.handle, 1, &self.fence)) catch {
+pub fn submitBegin(self: *Self) void {
+    debug.checkVk(c.vkResetFences(self.device.handle, 1, &self.fence)) catch {
         @panic("Failed to reset immidiate fence");
     };
     debug.checkVk(c.vkResetCommandBuffer(self.commandbuffer, 0)) catch {
@@ -81,7 +85,7 @@ pub fn submitBegin(self: *Self, core: *Core) void {
     };
 }
 
-pub fn submitEnd(self: *Self, core: *Core) void {
+pub fn submitEnd(self: *Self) void {
     const cmd = self.commandbuffer;
     debug.checkVk(c.vkEndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");
 
@@ -94,6 +98,6 @@ pub fn submitEnd(self: *Self, core: *Core) void {
         .commandBufferInfoCount = 1,
         .pCommandBufferInfos = &cmd_info,
     };
-    debug.checkVkPanic(c.vkQueueSubmit2(core.device.graphics_queue, 1, &submit_info, self.fence));
-    debug.checkVkPanic(c.vkWaitForFences(core.device.handle, 1, &self.fence, c.VK_TRUE, 1_000_000_000));
+    debug.checkVkPanic(c.vkQueueSubmit2(self.device.graphics_queue, 1, &submit_info, self.fence));
+    debug.checkVkPanic(c.vkWaitForFences(self.device.handle, 1, &self.fence, c.VK_TRUE, 1_000_000_000));
 }

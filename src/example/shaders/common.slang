@@ -13,6 +13,16 @@ public struct VkDrawMeshTasksIndirectCommandEXT {
   public uint groupCountZ;
 }
 
+public struct UIData {
+    public float4x4 modelMatrix;
+    public float4 viewport;
+    // The asterisk (*) makes it a 64-bit BDA pointer!
+    public float4 *curveBuffer;
+    public uint4 *bandBuffer;
+    public uint textureWidth;
+    public uint _pad;
+};
+
 public struct Vertex {
   public float3 position;
   public float uv_x;
@@ -45,6 +55,7 @@ public struct SceneData {
   public Transform *transforms;
   public Transform *cpu_transforms;
   public Mesh *meshes;
+  public UIData *uidata;
 #if USE_MESH_SHADING
   public VkDrawMeshTasksIndirectCommandEXT *indirectCommands;
   public uint *drawCount;

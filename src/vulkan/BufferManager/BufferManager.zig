@@ -4,54 +4,19 @@ const debug = @import("debug.zig");
 const c = @import("../clibs/clibs.zig").libs;
 const config = @import("config");
 const Core = @import("Core.zig");
-const BufferAllocator = @import("BufferAllocator.zig");
 const DescriptorManager = @import("DescriptorManager.zig");
-const AllocatedBuffer = BufferAllocator.AllocatedBuffer;
 
-const Quat = linalg.Quat(f32);
+const SceneData = @import("types.zig").SceneData;
+const AllocatedBuffer = @import("types.zig").AllocatedBuffer;
+const UIData = @import("types.zig").UIData;
+const Mesh = @import("types.zig").Mesh;
+const Transform = @import("types.zig").Transform;
+const Vertex = @import("types.zig").Vertex;
+
 const Vec3 = linalg.Vec3(f32);
 const Vec4 = linalg.Vec4(f32);
 const Mat4x4 = linalg.Mat4x4(f32);
-
-// --- 1. GPU STRUCTS (Must match Slang perfectly) ---
-pub const Vertex = extern struct {
-    position: Vec3 = .zeros,
-    uv_x: f32 = 0,
-    normal: Vec3 = .zeros,
-    uv_y: f32 = 0,
-    color: Vec4 = .zeros,
-};
-
-pub const Transform = extern struct {
-    modelMatrix: Mat4x4,
-    boundingSphere: Vec4,
-};
-
-pub const Mesh = extern struct {
-    vertexBuffer: u64, // globalvertexbuffer ptr with offset
-    indexBuffer: u64, // globalindexbuffer ptr with offset
-    indexCount: u32,
-    materialIndex: u32,
-};
-
-pub const SceneData = extern struct {
-    view: Mat4x4,
-    proj: Mat4x4,
-    viewproj: Mat4x4,
-    ambient_color: Vec4,
-    sun_direction: Vec4,
-    sun_color: Vec4,
-    // addresses
-    transforms: u64, // array of Transform
-    cpu_transforms: u64, // array of Transform
-    meshes: u64, // array of Mesh
-    indirectCommands: u64, // address to the indirect struct
-    drawCount: u64, // address to a single u32
-    drawMap: u64,
-    // other
-    totalObjects: u32,
-    _pad: u32 = 0,
-};
+const Quat = linalg.Quat(f32);
 
 const Self = @This();
 
@@ -59,6 +24,10 @@ const Self = @This();
 const MAX_GEOMETRY_BYTES = 64 * 1024 * 1024; // 64 MB for Verts/Indices
 pub const MAX_OBJECTS = 10000;
 const CPU_TRANSFORMS = 100;
+
+device: c.VkDevice,
+gpuallocator: c.VmaAllocator,
+allocationcallbacks: ?*c.VkAllocationCallbacks,
 
 // The Giant Geometry Buffers
 globalvertexbuffer: AllocatedBuffer = undefined,
@@ -82,24 +51,39 @@ countbuffer: AllocatedBuffer = undefined,
 countbufferaddr: u64 = undefined,
 drawmapbuffer: AllocatedBuffer = undefined,
 drawmapbufferaddr: u64 = undefined,
+uibuffer: AllocatedBuffer = undefined,
+uibufferaddr: u64 = undefined,
 
 // Uniforms
 scenebuffers: [Core.multibuffering]AllocatedBuffer = @splat(undefined),
 
-pub fn init() Self {
-    return .{};
+pub fn init(device: c.VkDevice, gpuallocator: c.VmaAllocator, allocationcallbacks: ?*c.VkAllocationCallbacks) Self {
+    return .{
+        .device = device,
+        .allocationcallbacks = allocationcallbacks,
+        .gpuallocator = gpuallocator,
+    };
 }
 
-pub fn destroyBuffers(self: *Self, bufferallocator: *BufferAllocator) void {
-    for (self.scenebuffers) |buf| bufferallocator.destroy(buf);
-    bufferallocator.destroy(self.globalvertexbuffer);
-    bufferallocator.destroy(self.globalindexbuffer);
-    bufferallocator.destroy(self.transformbuffer);
-    bufferallocator.destroy(self.meshbuffer);
-    bufferallocator.destroy(self.cpuside_transformbuffer);
-    bufferallocator.destroy(self.indirectbuffer);
-    bufferallocator.destroy(self.countbuffer);
-    bufferallocator.destroy(self.drawmapbuffer);
+pub fn flush(self: *Self, buffer: AllocatedBuffer, offset: c.VkDeviceSize, size: c.VkDeviceSize) void {
+    debug.checkVkPanic(c.vmaFlushAllocation(self.gpuallocator, buffer.allocation, offset, size));
+}
+
+pub fn destroy(self: *Self, buffer: AllocatedBuffer) void {
+    c.vmaDestroyBuffer(self.gpuallocator, buffer.buffer, buffer.allocation);
+}
+
+pub fn destroyBuffers(self: *Self) void {
+    for (self.scenebuffers) |buf| self.destroy(buf);
+    self.destroy(self.globalvertexbuffer);
+    self.destroy(self.globalindexbuffer);
+    self.destroy(self.transformbuffer);
+    self.destroy(self.meshbuffer);
+    self.destroy(self.cpuside_transformbuffer);
+    self.destroy(self.indirectbuffer);
+    self.destroy(self.countbuffer);
+    self.destroy(self.drawmapbuffer);
+    self.destroy(self.uibuffer);
 }
 
 // Initializes the memory arenas with MULTI-BUFFERING sizing
@@ -163,6 +147,13 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
 
+    self.uibuffer = allocator.create(
+        @sizeOf(UIData) * 1000, // TODO consider double buffer if meshes change
+        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+            c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        c.VMA_MEMORY_USAGE_GPU_ONLY, // TODO figure out what visibility
+    );
+
     self.cpuside_transformbuffer = allocator.create(
         @sizeOf(Transform) * CPU_TRANSFORMS * mb, // <--- Ring Buffered!
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -185,6 +176,8 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     self.indirectbufferaddr = core.bufferallocator.getBufferAddress(self.indirectbuffer);
     self.countbufferaddr = core.bufferallocator.getBufferAddress(self.countbuffer);
     self.drawmapbufferaddr = core.bufferallocator.getBufferAddress(self.drawmapbuffer);
+    self.uibufferaddr = core.bufferallocator.getBufferAddress(self.uibuffer);
+
     // upload base address to prevent crash when no object are loaded
     const base_v_addr = core.bufferallocator.getBufferAddress(self.globalvertexbuffer);
     const base_i_addr = core.bufferallocator.getBufferAddress(self.globalindexbuffer);
@@ -194,7 +187,7 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         .indexCount = 0,
         .materialIndex = 0,
     };
-    BufferAllocator.upload(core, std.mem.asBytes(&mesh), self.meshbuffer, 0);
+    self.upload(core, std.mem.asBytes(&mesh), self.meshbuffer, 0);
 }
 
 // App calls this to push a mesh into the Giant Buffer.
@@ -220,8 +213,8 @@ pub fn uploadMesh(
     const i_bytes = std.mem.sliceAsBytes(indices);
 
     // Upload via Staging Buffer
-    BufferAllocator.upload(core, v_bytes, self.globalvertexbuffer, self.vertex_byte_offset);
-    BufferAllocator.upload(core, i_bytes, self.globalindexbuffer, self.index_byte_offset);
+    self.upload(core, v_bytes, self.globalvertexbuffer, self.vertex_byte_offset);
+    self.upload(core, i_bytes, self.globalindexbuffer, self.index_byte_offset);
 
     // Get Base Device Addresses
     const base_v_addr = core.bufferallocator.getBufferAddress(self.globalvertexbuffer);
@@ -240,7 +233,7 @@ pub fn uploadMesh(
     self.index_byte_offset += i_size;
 
     // push to the objects list
-    BufferAllocator.upload(core, std.mem.asBytes(&mesh), self.meshbuffer, self.object_offset * @sizeOf(Mesh));
+    self.upload(core, std.mem.asBytes(&mesh), self.meshbuffer, self.object_offset * @sizeOf(Mesh));
     self.object_offset += 1;
 }
 
@@ -270,6 +263,8 @@ pub fn updateScene(
     const b_count = self.countbufferaddr;
     const b_cpu_trans = self.cpuside_transformbufferaddr;
     const b_drawmap = self.drawmapbufferaddr;
+    const b_ui = self.uibufferaddr;
+
     // Calculate byte offsets for this specific frame
     const frame_u64 = @as(u64, frame_index);
     _ = time;
@@ -285,8 +280,9 @@ pub fn updateScene(
             (frame_u64 * MAX_OBJECTS * @sizeOf(c.VkDrawIndirectCommand));
     }
     ptr.drawCount = b_count + (frame_u64 * @sizeOf(u32));
-    ptr.meshes = b_meshes;
     ptr.drawMap = b_drawmap + (frame_u64 * MAX_OBJECTS * @sizeOf(u32));
+    ptr.meshes = b_meshes;
+    ptr.uidata = b_ui;
     ptr.totalObjects = self.object_offset;
 }
 
@@ -308,6 +304,130 @@ pub fn initEmptyMesh(self: *Self, core: *Core) void {
         .materialIndex = 0,
     };
 
-    BufferAllocator.upload(core, std.mem.asBytes(&mesh), self.meshbuffer, self.object_offset * @sizeOf(Mesh));
+    self.upload(core, std.mem.asBytes(&mesh), self.meshbuffer, self.object_offset * @sizeOf(Mesh));
     self.object_offset += 1;
+}
+
+pub fn testUI(self: *Self, core: *Core) void {
+    // 1. Pack our 3 curves into an array of Vec4s
+    const mock_curves = [_]Vec4{
+        // Curve 1: P0(200, 200), P1(500, 300) | P2(800, 200)
+        Vec4.new(200, 200, 500, 300),
+        Vec4.new(800, 200, 0, 0),
+
+        // Curve 2: P0(800, 200), P1(900, 800) | P2(500, 900)
+        Vec4.new(800, 200, 900, 800),
+        Vec4.new(500, 900, 0, 0),
+
+        // Curve 3: P0(500, 900), P1(100, 800) | P2(200, 200)
+        Vec4.new(500, 900, 100, 800),
+        Vec4.new(200, 200, 0, 0),
+    };
+
+    const curve_bytes = std.mem.sliceAsBytes(&mock_curves);
+
+    // 2. Safety check for your giant buffer
+    if (self.vertex_byte_offset + curve_bytes.len > MAX_GEOMETRY_BYTES) {
+        @panic("Giant Geometry Buffer is full!");
+    }
+
+    // 3. Calculate the exact 64-bit BDA for where these curves will live
+    const base_v_addr = core.bufferallocator.getBufferAddress(self.globalvertexbuffer);
+    const curve_bda = base_v_addr + self.vertex_byte_offset;
+
+    // 4. Upload the raw curve bytes to the global buffer at the current offset
+    self.upload(core, curve_bytes, self.globalvertexbuffer, self.vertex_byte_offset);
+
+    // 5. Bump the global arena allocator!
+    self.vertex_byte_offset += curve_bytes.len;
+
+    // 6. Setup the UIData struct
+    const ui_data = UIData{
+        .modelMatrix = .identity,
+        .viewport = Vec4.new(2000.0, 1200.0, 0.0, 0.0), // Update to your window size
+        .curveBuffer = curve_bda, // <-- Injecting the BDA inside the global buffer!
+        .bandBuffer = 0,
+        .textureWidth = 0,
+        ._pad = 0,
+    };
+
+    // 7. Upload UIData to the UI Buffer
+    self.upload(core, std.mem.asBytes(&ui_data), self.uibuffer, 0);
+}
+
+pub fn create(
+    self: *Self,
+    alloc_size: usize,
+    usage: c.VkBufferUsageFlags,
+    memory_usage: c.VmaMemoryUsage,
+) AllocatedBuffer {
+    const buffer_info: c.VkBufferCreateInfo = .{
+        .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = alloc_size,
+        .usage = usage,
+    };
+
+    const vma_alloc_info: c.VmaAllocationCreateInfo = .{
+        .usage = memory_usage,
+        .flags = c.VMA_ALLOCATION_CREATE_MAPPED_BIT,
+    };
+
+    var new_buffer: AllocatedBuffer = undefined;
+    debug.checkVkPanic(c.vmaCreateBuffer(
+        self.gpuallocator,
+        &buffer_info,
+        &vma_alloc_info,
+        &new_buffer.buffer,
+        &new_buffer.allocation,
+        &new_buffer.info,
+    ));
+    return new_buffer;
+}
+
+pub fn upload(core: *Core, data_slice: []const u8, buffer: AllocatedBuffer, dst_offset: c.VkDeviceSize) void {
+    const size = data_slice.len;
+
+    // Create staging buffer (CPU visible)
+    const staging_buffer = create(
+        &core.bufferallocator,
+        size,
+        c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        c.VMA_MEMORY_USAGE_CPU_ONLY,
+    );
+    defer c.vmaDestroyBuffer(core.gpuallocator, staging_buffer.buffer, staging_buffer.allocation);
+
+    if (staging_buffer.info.pMappedData) |mapped_data_ptr| {
+        const byte_data_ptr = @as([*]u8, @ptrCast(mapped_data_ptr));
+        const staging_slice = byte_data_ptr[0..size];
+        @memcpy(staging_slice, data_slice);
+    } else {
+        std.log.err("Failed to map staging buffer.", .{});
+        @panic("");
+    }
+
+    // Copy from Staging to Giant Buffer at the correct offset
+    core.asynccontext.submitBegin(core);
+    const copy_region = c.VkBufferCopy{
+        .srcOffset = 0,
+        .dstOffset = dst_offset, // <--- Use the offset here!
+        .size = size,
+    };
+    const cmd = core.asynccontext.commandbuffer;
+    c.vkCmdCopyBuffer(cmd, staging_buffer.buffer, buffer.buffer, 1, &copy_region);
+    core.asynccontext.submitEnd(core);
+}
+
+pub fn getBufferAddress(self: *Self, buffer: AllocatedBuffer) c.VkDeviceAddress {
+    const deviceaddressinfo = c.VkBufferDeviceAddressInfo{
+        .sType = c.VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .pNext = null, // Always initialize pNext
+        .buffer = buffer.buffer,
+    };
+    const adr = c.vkGetBufferDeviceAddress(self.device, &deviceaddressinfo);
+    if (adr == 0) {
+        std.log.err("Failed to get buffer device address for SSBO. Is the feature enabled?", .{});
+        c.vmaDestroyBuffer(self.gpuallocator, buffer.buffer, buffer.allocation);
+        @panic("");
+    }
+    return adr;
 }

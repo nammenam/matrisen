@@ -1,12 +1,14 @@
 const std = @import("std");
 const log = std.log.scoped(.build);
 const Build = std.Build;
-const builtin = @import("builtin");
-const pipelinegen = @import("buildPipeline.zig");
 
 const shaderpath = "src/example/shaders";
 
 pub fn build(b: *Build) !void {
+    const alloc = std.heap.smp_allocator;
+    var threaded = std.Io.Threaded.init(alloc, .{});
+    const io = threaded.io();
+
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
 
@@ -19,7 +21,7 @@ pub fn build(b: *Build) !void {
         .optimize = optimize,
         .root_source_file = b.path("src/root.zig"),
     });
-    matrisen.addOptions("config", options);
+    matrisen.addImport("config", options.createModule());
 
     const exe = b.addExecutable(.{
         .name = "exe",
@@ -33,16 +35,50 @@ pub fn build(b: *Build) !void {
         }),
     });
 
-    // Add these two lines to bypass the internal Zig linker bug:
-    exe.use_llvm = true;
-    exe.use_lld = true;
+    exe.root_module.addImport("config", options.createModule());
+    exe.root_module.linkSystemLibrary("SDL3", .{});
+    exe.root_module.linkSystemLibrary("vulkan", .{});
 
-    exe.root_module.addOptions("config", options);
-    exe.linkLibCpp();
-    exe.linkLibC();
-    exe.linkSystemLibrary("SDL3");
-    exe.linkSystemLibrary("vulkan");
-    exe.addCSourceFile(.{ .file = b.path("src/clibs/vk_mem_alloc.cpp"), .flags = &.{} });
+    const shaders_step = b.step("shaders", "Compile Slang shaders");
+
+    // 1. Open the shaders directory
+    var dir = b.build_root.handle.openDir(io, shaderpath, .{ .iterate = true }) catch |err| {
+        log.warn("Could not open shader directory: {s}", .{@errorName(err)});
+        return err;
+    };
+    defer dir.close(io);
+
+    var it = dir.iterate();
+
+    // 2. Loop through every file in the directory
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".slang")) continue;
+
+        // Skip common.slang, we don't want to compile it as a standalone executable shader
+        if (std.mem.eql(u8, entry.name, "common.slang")) continue;
+
+        // Infer the shader stage based on the filename (e.g., triangle.vert.slang)
+        var stage: []const u8 = "compute"; // default fallback
+        if (std.mem.indexOf(u8, entry.name, ".vert")) stage = "vertex";
+        if (std.mem.indexOf(u8, entry.name, ".frag")) stage = "fragment";
+        if (std.mem.indexOf(u8, entry.name, ".mesh")) stage = "mesh";
+
+        // Compile the shader
+        const shader_module = compileSlang(b, shaders_step, entry.name, "main", stage, enable_meshshading);
+
+        // Strip ".slang" from the filename to create a clean Zig module name
+        // e.g., "triangle.vert.slang" becomes "triangle.vert_spv"
+        const base_name = entry.name[0 .. entry.name.len - 6];
+        const module_name = b.fmt("{s}_spv", .{base_name});
+
+        // Expose it to your Zig code so you can use @embedFile(module_name)
+        exe.root_module.addImport(module_name, shader_module);
+
+        log.info("Registered shader: {s} -> @embedFile(\"{s}\")", .{ entry.name, module_name });
+    }
+
+    // ==========================================================
 
     b.installArtifact(exe);
 
@@ -54,58 +90,44 @@ pub fn build(b: *Build) !void {
     }
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+}
 
-    // --- SLANG SHADER COMPILATION ---
-    // the shaders gets compiled and wrapped in a pipeline builder at build time
-    // the result is a module residing in the .zig-cache that can be imported to the
-    // pipeline manager only having to change one source file ( + this one) for adding new shaders
-    const shaders_step = b.step("shaders", "Compile Slang shaders");
+fn compileSlang(
+    b: *Build,
+    shaders_step: *Build.Step,
+    filename: []const u8,
+    entry: []const u8,
+    stage: []const u8,
+    meshshading: bool,
+) *Build.Module {
+    const cmd = b.addSystemCommand(&.{"slangc"});
 
-    // 1. The Draw/Culling Compute Pipeline
-    pipelinegen.addPipeline(b, matrisen, shaders_step, shaderpath, .{
-        .name = "drawcmdpipeline",
-        .shader_filename = "drawcmd.slang",
-        .compute = "drawcmdMain",
-        .meshshading = enable_meshshading,
-    });
+    // Input file
+    const shader_src = b.path(b.fmt("{s}/{s}", .{ shaderpath, filename }));
+    cmd.addFileArg(shader_src);
 
-    // 2. The Default 3D Pipeline (Vertex + Fragment)
-    pipelinegen.addPipeline(b, matrisen, shaders_step, shaderpath, .{
-        .name = "rasterpipeline",
-        .shader_filename = "rastermain.slang",
-        .vertex = "vertexMain",
-        .fragment = "fragmentMain",
-        // .polygon_mode = "c.VK_POLYGON_MODE_LINE", // Wireframe!
-        .polygon_mode = "c.VK_POLYGON_MODE_FILL", // Solid!
-        .depth_test = true,
-        .multisampling = .msam4,
-    });
+    const common_src = b.path(b.fmt("{s}/common.slang", .{shaderpath}));
+    cmd.addFileInput(common_src);
+    // --------------------------
 
-    // 3. The New Mesh Shader Pipeline!
-    pipelinegen.addPipeline(b, matrisen, shaders_step, shaderpath, .{
-        .name = "rasterpipeline_mesh",
-        .shader_filename = "rastermain_mesh.slang",
-        .mesh = "meshMain",
-        .fragment = "fragmentMain",
-        .polygon_mode = "c.VK_POLYGON_MODE_FILL",
-        .depth_test = true,
-        .multisampling = .msam4,
-        .meshshading = enable_meshshading,
-    });
+    if (meshshading) {
+        cmd.addArg("-DUSE_MESH_SHADING=1");
+    } else {
+        cmd.addArg("-DUSE_MESH_SHADING=0");
+    }
 
-    pipelinegen.addPipeline(b, matrisen, shaders_step, shaderpath, .{
-        .name = "terrainpipeline",
-        .shader_filename = "terrain.slang", // whatever your shader file is called
-        .compute = "terrainMain", // whatever your entry point is called
-    });
-    // 4. Slug Text Pipeline
-    pipelinegen.addPipeline(b, matrisen, shaders_step, shaderpath, .{
-        .name = "vectorgfxpipeline",
-        .shader_filename = "vectorgfx.slang",
-        .vertex = "slugVertex",
-        .fragment = "slugFragment",
-        .cull_mode = "c.VK_CULL_MODE_NONE",
-        .blending = .alpha, // Slug usually needs alpha blending
-        .depth_test = false,
+    cmd.addArgs(&.{ "-target", "spirv", "-fvk-use-scalar-layout" });
+    cmd.addArgs(&.{ "-entry", entry, "-stage", stage });
+    cmd.addArg("-o");
+
+    // Output file (managed by Zig's cache)
+    const spv_filename = b.fmt("{s}.spv", .{entry});
+    const spv_output = cmd.addOutputFileArg(spv_filename);
+
+    shaders_step.dependOn(&cmd.step);
+
+    // Return as a module to be embedded
+    return b.createModule(.{
+        .root_source_file = spv_output,
     });
 }

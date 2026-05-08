@@ -1,8 +1,6 @@
 import common;
-
 // ===================================================
 // Slug Algorithm - Vector Graphics Renderer
-// Translated to Slang by Claude and Brage
 // Original: Copyright 2017, Eric Lengyel (MIT License)
 // ===================================================
 
@@ -17,6 +15,8 @@ struct SlugPushConstants {
     float4   viewport;      // Viewport dimensions in pixels
 };
 
+
+// FIX dont know have push constants not the bindless way
 [[vk::push_constant]]
 SlugPushConstants push;
 
@@ -84,36 +84,6 @@ float2 SlugDilate(
         tex.y + dot(d, jac.zw)
     );
 }
-
-// ==========================================
-// VERTEX SHADER
-// ==========================================
-
-[shader("vertex")]
-SlugVaryings slugVertex(SlugVertex input) {
-    SlugVaryings output;
-
-    float2 p;
-    output.texcoord = SlugDilate(
-        input.pos, input.tex, input.jac,
-        push.mvp[0], push.mvp[1], push.mvp[3],
-        push.viewport.xy,
-        p
-    );
-
-    output.position.x = p.x * push.mvp[0].x + p.y * push.mvp[0].y + push.mvp[0].w;
-    output.position.y = p.x * push.mvp[1].x + p.y * push.mvp[1].y + push.mvp[1].w;
-    output.position.z = p.x * push.mvp[2].x + p.y * push.mvp[2].y + push.mvp[2].w;
-    output.position.w = p.x * push.mvp[3].x + p.y * push.mvp[3].y + push.mvp[3].w;
-
-    SlugUnpack(input.tex, input.bnd, output.banding, output.glyph);
-    output.color = input.col;
-    return output;
-}
-
-// ==========================================
-// FRAGMENT HELPERS
-// ==========================================
 
 // Texel fetch helper - matches HLSL Load semantics
 float4 CurveLoad(int2 coord) {
@@ -190,87 +160,90 @@ float CalcCoverage(float xcov, float ycov, float xwgt, float ywgt, int flags) {
     return coverage;
 }
 
-float SlugRender(float2 renderCoord, float4 bandTransform, int4 glyphData) {
-    float2 emsPerPixel  = fwidth(renderCoord);
-    float2 pixelsPerEm  = 1.0 / emsPerPixel;
 
-    int2 bandMax    = glyphData.zw;
-    bandMax.y      &= 0x00FF;
+// ==========================================
+// VERTEX SHADER (Fullscreen Triangle Hack)
+// ==========================================
+[shader("vertex")]
+SlugVaryings slugVertex(uint vertexId: SV_VertexID) {
+    SlugVaryings output;
 
-    int2 bandIndex  = clamp(
-        int2(renderCoord * bandTransform.xy + bandTransform.zw),
-        int2(0, 0),
-        bandMax
-    );
-    int2 glyphLoc   = glyphData.xy;
+    // Generate a fullscreen triangle without needing a vertex buffer!
+    float2 uvs = float2((vertexId << 1) & 2, vertexId & 2);
+    output.position = float4(uvs * 2.0f - 1.0f, 0.0f, 1.0f);
 
-    float xcov = 0.0;
-    float xwgt = 0.0;
+    // Scale the UVs to a 0 to 1000 coordinate system for easy curve placement
+    output.texcoord = uvs * 1000.0;
+    output.color = float4(0.2, 0.8, 1.0, 1.0); // Nice Slug Blue
 
-    // Horizontal band
-    uint2 hbandData = BandLoad(int2(glyphLoc.x + bandIndex.y, glyphLoc.y)).xy;
-    int2  hbandLoc  = CalcBandLoc(glyphLoc, hbandData.y);
-
-    for (int ci = 0; ci < int(hbandData.x); ci++) {
-        int2   curveLoc = int2(BandLoad(int2(hbandLoc.x + ci, hbandLoc.y)).xy);
-        float4 p12      = CurveLoad(curveLoc) - float4(renderCoord, renderCoord);
-        float2 p3       = CurveLoad(int2(curveLoc.x + 1, curveLoc.y)).xy - renderCoord;
-
-        if (max(max(p12.x, p12.z), p3.x) * pixelsPerEm.x < -0.5) break;
-
-        uint code = CalcRootCode(p12.y, p12.w, p3.y);
-        if (code != 0u) {
-            float2 r = SolveHorizPoly(p12, p3) * pixelsPerEm.x;
-
-            if ((code & 1u) != 0u) {
-                xcov += saturate(r.x + 0.5);
-                xwgt  = max(xwgt, saturate(1.0 - abs(r.x) * 2.0));
-            }
-            if (code > 1u) {
-                xcov -= saturate(r.y + 0.5);
-                xwgt  = max(xwgt, saturate(1.0 - abs(r.y) * 2.0));
-            }
-        }
-    }
-
-    float ycov = 0.0;
-    float ywgt = 0.0;
-
-    // Vertical band
-    uint2 vbandData = BandLoad(int2(glyphLoc.x + bandMax.y + 1 + bandIndex.x, glyphLoc.y)).xy;
-    int2  vbandLoc  = CalcBandLoc(glyphLoc, vbandData.y);
-
-    for (int ci = 0; ci < int(vbandData.x); ci++) {
-        int2   curveLoc = int2(BandLoad(int2(vbandLoc.x + ci, vbandLoc.y)).xy);
-        float4 p12      = CurveLoad(curveLoc) - float4(renderCoord, renderCoord);
-        float2 p3       = CurveLoad(int2(curveLoc.x + 1, curveLoc.y)).xy - renderCoord;
-
-        if (max(max(p12.y, p12.w), p3.y) * pixelsPerEm.y < -0.5) break;
-
-        uint code = CalcRootCode(p12.x, p12.z, p3.x);
-        if (code != 0u) {
-            float2 r = SolveVertPoly(p12, p3) * pixelsPerEm.y;
-
-            if ((code & 1u) != 0u) {
-                ycov -= saturate(r.x + 0.5);
-                ywgt  = max(ywgt, saturate(1.0 - abs(r.x) * 2.0));
-            }
-            if (code > 1u) {
-                ycov += saturate(r.y + 0.5);
-                ywgt  = max(ywgt, saturate(1.0 - abs(r.y) * 2.0));
-            }
-        }
-    }
-
-    return CalcCoverage(xcov, ycov, xwgt, ywgt, glyphData.w);
+    return output;
 }
 
 // ==========================================
-// FRAGMENT SHADER
+// FRAGMENT SHADER (Hardcoded Curves)
 // ==========================================
+
+// Helper to evaluate a standard Bezier curve (P0, P1, P2) using Slug's root math
+void EvaluateCurve(float2 P0, float2 P1, float2 P2, float2 renderCoord,
+                   inout float xcov, inout float xwgt, inout float ycov, inout float ywgt) {
+
+    // Magic unpacking: p12 holds P0 and P1. p3 holds P2.
+    float4 p12 = float4(P0, P1) - float4(renderCoord, renderCoord);
+    float2 p3  = P2 - renderCoord;
+
+    // 1. Horizontal Coverage
+    uint hcode = CalcRootCode(p12.y, p12.w, p3.y);
+    if (hcode != 0u) {
+        float2 r = SolveHorizPoly(p12, p3); // Assume 1 pixel per em for this test
+        if ((hcode & 1u) != 0u) {
+            xcov += saturate(r.x + 0.5);
+            xwgt  = max(xwgt, saturate(1.0 - abs(r.x) * 2.0));
+        }
+        if (hcode > 1u) {
+            xcov -= saturate(r.y + 0.5);
+            xwgt  = max(xwgt, saturate(1.0 - abs(r.y) * 2.0));
+        }
+    }
+
+    // 2. Vertical Coverage
+    uint vcode = CalcRootCode(p12.x, p12.z, p3.x);
+    if (vcode != 0u) {
+        float2 r = SolveVertPoly(p12, p3);
+        if ((vcode & 1u) != 0u) {
+            ycov -= saturate(r.x + 0.5);
+            ywgt  = max(ywgt, saturate(1.0 - abs(r.x) * 2.0));
+        }
+        if (vcode > 1u) {
+            ycov += saturate(r.y + 0.5);
+            ywgt  = max(ywgt, saturate(1.0 - abs(r.y) * 2.0));
+        }
+    }
+}
 
 [shader("fragment")]
 float4 slugFragment(SlugVaryings input) : SV_Target {
-    float coverage = SlugRender(input.texcoord, input.banding, input.glyph);
-    return input.color * coverage;
+    float xcov = 0.0, xwgt = 0.0;
+    float ycov = 0.0, ywgt = 0.0;
+
+    // Let's draw a shape made of 3 Bezier curves!
+    // Curve 1: Top edge (straight-ish line pulling slightly down)
+    EvaluateCurve(float2(200, 200), float2(500, 300), float2(800, 200), input.texcoord, xcov, xwgt, ycov, ywgt);
+
+    // Curve 2: Right swooping belly
+    EvaluateCurve(float2(800, 200), float2(900, 800), float2(500, 900), input.texcoord, xcov, xwgt, ycov, ywgt);
+
+    // Curve 3: Left swooping belly (closing the loop)
+    EvaluateCurve(float2(500, 900), float2(100, 800), float2(200, 200), input.texcoord, xcov, xwgt, ycov, ywgt);
+
+    // Calculate final coverage using Slug's exact logic
+    float coverage = max(
+        abs(xcov * xwgt + ycov * ywgt) / max(xwgt + ywgt, 1.0 / 65536.0),
+        min(abs(xcov), abs(ycov))
+    );
+    coverage = saturate(coverage);
+
+    // If coverage is 0, discard the pixel to show the background
+    if (coverage <= 0.0) discard;
+
+    return float4(input.color.rgb, coverage);
 }
