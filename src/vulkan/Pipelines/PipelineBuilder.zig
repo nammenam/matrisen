@@ -464,3 +464,12 @@ pub fn addPipeline(
         .blending = .alpha, // Slug usually needs alpha blending
         .depth_test = false,
     });
+
+
+
+    const wrapper_path = gen.add("shader.zig",
+        \\const std = @import("std");
+        \\const content align(4) = @embedFile("shader.spv").*;
+        \\pub const bytes = content;
+        \\pub const code_u8 = std.mem.bytesAsSlice(u8, &content);
+    );

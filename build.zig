@@ -5,9 +5,9 @@ const Build = std.Build;
 const shaderpath = "src/example/shaders";
 
 pub fn build(b: *Build) !void {
-    const alloc = std.heap.smp_allocator;
-    var threaded = std.Io.Threaded.init(alloc, .{});
-    const io = threaded.io();
+    // const alloc = std.heap.smp_allocator;
+    // var threaded = std.Io.Threaded.init(alloc, .{});
+    // const io = threaded.io();
 
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
@@ -39,46 +39,9 @@ pub fn build(b: *Build) !void {
     exe.root_module.linkSystemLibrary("SDL3", .{});
     exe.root_module.linkSystemLibrary("vulkan", .{});
 
+    // add vma
+
     const shaders_step = b.step("shaders", "Compile Slang shaders");
-
-    // 1. Open the shaders directory
-    var dir = b.build_root.handle.openDir(io, shaderpath, .{ .iterate = true }) catch |err| {
-        log.warn("Could not open shader directory: {s}", .{@errorName(err)});
-        return err;
-    };
-    defer dir.close(io);
-
-    var it = dir.iterate();
-
-    // 2. Loop through every file in the directory
-    while (try it.next(io)) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.name, ".slang")) continue;
-
-        // Skip common.slang, we don't want to compile it as a standalone executable shader
-        if (std.mem.eql(u8, entry.name, "common.slang")) continue;
-
-        // Infer the shader stage based on the filename (e.g., triangle.vert.slang)
-        var stage: []const u8 = "compute"; // default fallback
-        if (std.mem.indexOf(u8, entry.name, ".vert")) stage = "vertex";
-        if (std.mem.indexOf(u8, entry.name, ".frag")) stage = "fragment";
-        if (std.mem.indexOf(u8, entry.name, ".mesh")) stage = "mesh";
-
-        // Compile the shader
-        const shader_module = compileSlang(b, shaders_step, entry.name, "main", stage, enable_meshshading);
-
-        // Strip ".slang" from the filename to create a clean Zig module name
-        // e.g., "triangle.vert.slang" becomes "triangle.vert_spv"
-        const base_name = entry.name[0 .. entry.name.len - 6];
-        const module_name = b.fmt("{s}_spv", .{base_name});
-
-        // Expose it to your Zig code so you can use @embedFile(module_name)
-        exe.root_module.addImport(module_name, shader_module);
-
-        log.info("Registered shader: {s} -> @embedFile(\"{s}\")", .{ entry.name, module_name });
-    }
-
-    // ==========================================================
 
     b.installArtifact(exe);
 
@@ -90,44 +53,56 @@ pub fn build(b: *Build) !void {
     }
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    // Explicitly compile the three entry points from your scene.slang file
+    addSlangShader(b, matrisen, shaders_step, "rastermain.slang", "vertexMain", "vertex");
+    addSlangShader(b, matrisen, shaders_step, "rastermain.slang", "fragmentMain", "fragment");
+    addSlangShader(b, matrisen, shaders_step, "rastermain_mesh.slang", "meshMain", "mesh");
+    addSlangShader(b, matrisen, shaders_step, "rastermain_mesh.slang", "fragmentMain", "fragment");
+    addSlangShader(b, matrisen, shaders_step, "drawcmd.slang", "drawcmdMain", "compute");
+    addSlangShader(b, matrisen, shaders_step, "terrain.slang", "terrainMain", "compute");
+    addSlangShader(b, matrisen, shaders_step, "vectorgfx.slang", "slugVertex", "vertex");
+    addSlangShader(b, matrisen, shaders_step, "vectorgfx.slang", "slugFragment", "fragment");
+
+    b.installArtifact(exe);
+
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
+    }
 }
 
-fn compileSlang(
-    b: *Build,
-    shaders_step: *Build.Step,
+fn addSlangShader(
+    b: *std.Build,
+    mod: *std.Build.Module,
+    shaders_step: *std.Build.Step,
     filename: []const u8,
-    entry: []const u8,
+    entry_point: []const u8,
     stage: []const u8,
-    meshshading: bool,
-) *Build.Module {
-    const cmd = b.addSystemCommand(&.{"slangc"});
-
-    // Input file
+) void {
     const shader_src = b.path(b.fmt("{s}/{s}", .{ shaderpath, filename }));
+
+    const cmd = b.addSystemCommand(&.{"slangc"});
     cmd.addFileArg(shader_src);
+    cmd.addArg("-target");
+    cmd.addArg("spirv");
 
-    const common_src = b.path(b.fmt("{s}/common.slang", .{shaderpath}));
-    cmd.addFileInput(common_src);
-    // --------------------------
+    // Crucial for Buffer Device Address and exact struct matching with Zig!
+    cmd.addArg("-fvk-use-scalar-layout");
 
-    if (meshshading) {
-        cmd.addArg("-DUSE_MESH_SHADING=1");
-    } else {
-        cmd.addArg("-DUSE_MESH_SHADING=0");
-    }
-
-    cmd.addArgs(&.{ "-target", "spirv", "-fvk-use-scalar-layout" });
-    cmd.addArgs(&.{ "-entry", entry, "-stage", stage });
+    cmd.addArg("-entry");
+    cmd.addArg(entry_point);
+    cmd.addArg("-stage");
+    cmd.addArg(stage);
     cmd.addArg("-o");
 
-    // Output file (managed by Zig's cache)
-    const spv_filename = b.fmt("{s}.spv", .{entry});
-    const spv_output = cmd.addOutputFileArg(spv_filename);
-
+    const spv_output = cmd.addOutputFileArg(b.fmt("{s}.spv", .{entry_point}));
     shaders_step.dependOn(&cmd.step);
 
-    // Return as a module to be embedded
-    return b.createModule(.{
-        .root_source_file = spv_output,
-    });
+    const gen = b.addWriteFiles();
+    _ = gen.addCopyFile(spv_output, "shader.spv");
+
+    const shader_module = b.createModule(.{ .root_source_file = spv_output });
+
+    const import_name = b.fmt("{s}", .{entry_point});
+    mod.addImport(import_name, shader_module);
 }

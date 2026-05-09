@@ -3,13 +3,6 @@ const c = @import("../clibs/clibs.zig").libs;
 const checkVkPanic = @import("debug.zig").checkVkPanic;
 const DescriptorLayoutBuilder = @import("DescriptorLayoutBuilder.zig");
 
-// Import the auto-generated pipelines from build.zig
-const Rasterpipeline = @import("rasterpipeline");
-const Meshrasterpipeline = @import("rasterpipeline_mesh");
-const Drawcmdpipeline = @import("drawcmdpipeline");
-const Terrainpipeline = @import("terrainpipeline");
-const UIpipeline = @import("vectorgfxpipeline");
-
 const Self = @This();
 
 sharedpipelinelayout: c.VkPipelineLayout,
@@ -51,6 +44,16 @@ pub fn init(allocator: std.mem.Allocator, device: c.VkDevice, allocationcallback
 
     var sharedpipelinelayout: c.VkPipelineLayout = undefined;
     checkVkPanic(c.vkCreatePipelineLayout(device, &layoutinfo, null, &sharedpipelinelayout));
+
+    const vertexMain align(4) = @embedFile(@import("vertexMain")).*;
+    const fragmentMain align(4) = @embedFile(@import("fragmentMain")).*;
+    const meshMain align(4) = @embedFile(@import("meshMain")).*;
+    // const fragmentMain align(4) = @embedFile(@import("fragmentMain")).*;
+    const drawcmdMain align(4) = @embedFile(@import("drawcmdMain")).*;
+    const terrainMain align(4) = @embedFile(@import("terrainMain")).*;
+    const slugVertex align(4) = @embedFile(@import("slugVertex")).*;
+    const slugMesh align(4) = @embedFile(@import("slugMesh")).*;
+    const slugFragment align(4) = @embedFile(@import("slugFragment")).*;
 
     // Delegate pipeline creation to their respective files
     const rasterpipeline = Rasterpipeline.init(device, sharedpipelinelayout, allocationcallbacks);
