@@ -24,10 +24,12 @@ pub fn loop(io: std.Io, engine: *Core, window: *m.Window) !void {
     camera.distance = 250;
 
     while (!window.state.quit) {
-        const dt = t.untilNow(io, .awake).toSeconds();
+        const dt = @as(f32, @floatFromInt(t.untilNow(io, .awake).toNanoseconds())) / 1_000_000_000;
         t = std.Io.Clock.awake.now(io);
-        std.debug.print("Took {} ns\n", .{dt});
+        std.debug.print("delta time is {0:2} s      ", .{dt});
         time = @as(f32, @floatFromInt(t_start.untilNow(io, .awake).toNanoseconds())) / 1_000_000_000;
+        std.debug.print("time is  {0:2} s", .{time});
+        std.debug.print("                                                                  \r", .{});
         window.processInput();
         // camera.firstPerson(window);
         camera.orbit(window);

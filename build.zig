@@ -1,8 +1,7 @@
 const std = @import("std");
 const log = std.log.scoped(.build);
 const Build = std.Build;
-
-const shaderpath = "src/example/shaders";
+const shaders = @import("src/shaders.zig");
 
 pub fn build(b: *Build) !void {
     // const alloc = std.heap.smp_allocator;
@@ -60,16 +59,24 @@ pub fn build(b: *Build) !void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    // Explicitly compile the three entry points from your scene.slang file
-    compileSlang(b, matrisen, shaders_step, "rastermain.slang", "vertexMain", "vertex", enable_meshshading);
-    compileSlang(b, matrisen, shaders_step, "rastermain.slang", "fragmentMain", "fragment", enable_meshshading);
-    compileSlang(b, matrisen, shaders_step, "rastermain_mesh.slang", "meshMain", "mesh", enable_meshshading);
-    compileSlang(b, matrisen, shaders_step, "rastermain_mesh.slang", "meshFragmentMain", "fragment", enable_meshshading);
-    compileSlang(b, matrisen, shaders_step, "drawcmd.slang", "drawcmdMain", "compute", enable_meshshading);
-    compileSlang(b, matrisen, shaders_step, "terrain.slang", "terrainMain", "compute", enable_meshshading);
-    compileSlang(b, matrisen, shaders_step, "vectorgfx.slang", "slugVertex", "vertex", enable_meshshading);
-    compileSlang(b, matrisen, shaders_step, "vectorgfx.slang", "slugFragment", "fragment", enable_meshshading);
+    // replace all the manual compileSlang calls with:
+    for (shaders.shaders) |def| {
+        switch (def) {
+            .compute => |s| {
+                compileSlang(b, shaders_step, s.file, s.entry, "compute", enable_meshshading);
+            },
+            .graphics => |s| {
+                compileSlang(b, shaders_step, s.file, s.entry_vert, "vertex", enable_meshshading);
+                compileSlang(b, shaders_step, s.file, s.entry_frag, "fragment", enable_meshshading);
+            },
+            .mesh_graphics => |s| {
+                compileSlang(b, shaders_step, s.file, s.entry_mesh, "mesh", enable_meshshading);
+                compileSlang(b, shaders_step, s.file, s.entry_frag, "fragment", enable_meshshading);
+            },
+        }
+    }
 
+    exe.step.dependOn(shaders_step);
     b.installArtifact(exe);
 
     if (b.args) |args| {
@@ -79,7 +86,6 @@ pub fn build(b: *Build) !void {
 
 fn compileSlang(
     b: *Build,
-    mod: *Build.Module,
     shaders_step: *Build.Step,
     filename: []const u8,
     entry: []const u8,
@@ -87,14 +93,11 @@ fn compileSlang(
     meshshading: bool,
 ) void {
     const cmd = b.addSystemCommand(&.{"slangc"});
-
-    // Input file
-    const shader_src = b.path(b.fmt("{s}/{s}", .{ shaderpath, filename }));
+    const shader_src = b.path(b.fmt("{s}/{s}", .{ shaders.src, filename }));
     cmd.addFileArg(shader_src);
 
-    const common_src = b.path(b.fmt("{s}/common.slang", .{shaderpath}));
+    const common_src = b.path(b.fmt("{s}/common.slang", .{shaders.src}));
     cmd.addFileInput(common_src);
-    // --------------------------
 
     if (meshshading) {
         cmd.addArg("-DUSE_MESH_SHADING=1");
@@ -106,12 +109,9 @@ fn compileSlang(
     cmd.addArgs(&.{ "-entry", entry, "-stage", stage });
     cmd.addArg("-o");
 
-    // Output file (managed by Zig's cache)
-    const spv_filename = b.fmt("{s}.spv", .{entry});
-    const spv_output = cmd.addOutputFileArg(spv_filename);
+    const out_path = b.fmt("{s}/{s}.spv", .{ shaders.spv, entry });
+    cmd.addArg(out_path);
 
     shaders_step.dependOn(&cmd.step);
-
-    // Return as a module to be embedded
-    mod.addImport(entry, b.createModule(.{ .root_source_file = spv_output }));
+    // no more addImport needed
 }

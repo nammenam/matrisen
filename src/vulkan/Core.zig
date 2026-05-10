@@ -98,13 +98,15 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
     const depthimage = imageallocator.createDepthImage(drawextent3d, depthformat);
     const pipelinemanager: PipelineManager = .init(allocator, device.handle, alloc_callbacks);
 
-    const framecontexts: [multibuffering]FrameContext = @splat(FrameContext.init(
-        device.handle,
-        device.graphics_queue,
-        physicaldevice,
-        alloc_callbacks,
-    ));
-
+    var framecontexts: [multibuffering]FrameContext = undefined;
+    for (&framecontexts) |*frame| {
+        frame.* = .init(
+            device.handle,
+            device.graphics_queue,
+            physicaldevice,
+            alloc_callbacks,
+        );
+    }
     const asynccontext: AsyncContext = .init(device, physicaldevice, alloc_callbacks);
     const buffermanager: BufferManager = .init(device.handle, gpuallocator, alloc_callbacks);
     const descriptormanager: DescriptorManager = .init(allocator, device.handle, pipelinemanager);
@@ -277,11 +279,11 @@ fn recordComputePass(self: *Self, cmd: c.VkCommandBuffer) void {
     );
 
     // Terrain / FIX run only once
-    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.terrainpipeline);
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.get("terrainMain"));
     c.vkCmdDispatch(cmd, 16, 16, 1);
 
     // Mesh Culling
-    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.drawcmdpipeline);
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.get("drawcmdMain"));
 
     // Fixed: Dynamic Dispatch based on exactly how many objects exist
     // const dispatch_x = (self.buffermanager.object_offset + 63) / 64;
@@ -319,9 +321,9 @@ fn recordGraphicsPass(self: *Self, frame: *FrameContext, cmd: c.VkCommandBuffer,
     frame.beginGraphicsPass(self);
 
     if (config.meshshading) {
-        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.meshrasterpipeline);
+        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.get("meshMain"));
     } else {
-        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.rasterpipeline);
+        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.get("vertexMain"));
     }
 
     c.vkCmdBindDescriptorSets(

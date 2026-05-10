@@ -1,8 +1,11 @@
 const std = @import("std");
 const c = @import("c");
 const checkVkPanic = @import("errors.zig").checkVkPanic;
+const config = @import("config");
 const DescriptorLayoutBuilder = @import("DescriptorLayoutBuilder.zig");
 const PipelineBuilder = @import("PipelineBuilder.zig");
+
+const shaders = @import("../shaders.zig");
 
 const renderformat = @import("Core.zig").renderformat;
 const depthformat = @import("Core.zig").depthformat;
@@ -15,11 +18,7 @@ alloc_callbacks: ?*c.VkAllocationCallbacks,
 sharedpipelinelayout: c.VkPipelineLayout,
 descriptorlayout: c.VkDescriptorSetLayout,
 
-rasterpipeline: c.VkPipeline = undefined,
-meshrasterpipeline: c.VkPipeline = undefined,
-drawcmdpipeline: c.VkPipeline = undefined,
-uipipeline: c.VkPipeline = undefined,
-terrainpipeline: c.VkPipeline = undefined,
+pipelines: [shaders.shaders.len]c.VkPipeline,
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -56,41 +55,70 @@ pub fn init(
     var sharedpipelinelayout: c.VkPipelineLayout = undefined;
     checkVkPanic(c.vkCreatePipelineLayout(device, &layoutinfo, null, &sharedpipelinelayout));
 
-    var pipeline_manager = Self{
+    var self = Self{
         .device = device,
         .alloc_callbacks = alloc_callbacks,
         .sharedpipelinelayout = sharedpipelinelayout,
         .descriptorlayout = descriptorlayout,
+        .pipelines = undefined,
     };
-    // Delegate pipeline creation to their respective files
-    // TODO phase this out of init and into separate application level function
-    pipeline_manager.addGraphicsPipeline(@import("vertexMain"), @import("fragmentMain"));
-    pipeline_manager.addMeshGraphicsPipeline(@import("meshMain"), @import("meshFragmentMain"));
-    pipeline_manager.addGraphicsPipeline(@import("slugVertex"), @import("slugFragment"));
-    pipeline_manager.addComputePipeline(@import("drawcmdMain"));
-    pipeline_manager.addComputePipeline(@import("terrainMain"));
 
-    return pipeline_manager;
+    inline for (shaders.shaders, 0..) |def, i| {
+        self.pipelines[i] = switch (def) {
+            .compute => |s| blk: {
+                const code = comptime embedSpv("../../" ++ shaders.spv ++ s.entry ++ ".spv");
+                break :blk self.buildCompute(code);
+            },
+            .graphics => |s| blk: {
+                const vert = comptime embedSpv("../../" ++ shaders.spv ++ s.entry_vert ++ ".spv");
+                const frag = comptime embedSpv("../../" ++ shaders.spv ++ s.entry_frag ++ ".spv");
+                break :blk self.buildGraphics(vert, frag);
+            },
+            .mesh_graphics => |s| blk: {
+                const mesh = comptime embedSpv("../../" ++ shaders.spv ++ s.entry_mesh ++ ".spv");
+                const frag = comptime embedSpv("../../" ++ shaders.spv ++ s.entry_frag ++ ".spv");
+                break :blk self.buildMeshGraphics(mesh, frag);
+            },
+        };
+    }
+
+    return self;
 }
 
 pub fn deinit(self: *Self) void {
     c.vkDestroyDescriptorSetLayout(self.device, self.descriptorlayout, self.alloc_callbacks);
     c.vkDestroyPipelineLayout(self.device, self.sharedpipelinelayout, self.alloc_callbacks);
-    c.vkDestroyPipeline(self.device, self.rasterpipeline, self.alloc_callbacks);
-    c.vkDestroyPipeline(self.device, self.meshrasterpipeline, self.alloc_callbacks);
-    c.vkDestroyPipeline(self.device, self.drawcmdpipeline, self.alloc_callbacks);
-    c.vkDestroyPipeline(self.device, self.terrainpipeline, self.alloc_callbacks);
-    c.vkDestroyPipeline(self.device, self.uipipeline, self.alloc_callbacks);
+    for (self.pipelines) |pipeline| {
+        c.vkDestroyPipeline(self.device, pipeline, self.alloc_callbacks);
+    }
 }
 
-pub fn addComputePipeline(self: *Self, compute_code: anytype) void {
-    var builder: PipelineBuilder = .init(self.device, self.alloc_callbacks);
+fn embedSpv(comptime path: []const u8) []const u32 {
+    const bytes = @embedFile(path);
+    comptime std.debug.assert(bytes.len % 4 == 0);
+    return comptime @as([]const u32, @alignCast(std.mem.bytesAsSlice(u32, bytes)));
+}
+
+pub fn get(self: *Self, comptime name: []const u8) c.VkPipeline {
+    inline for (shaders.shaders, 0..) |def, i| {
+        const matches = switch (def) {
+            .compute => |s| comptime std.mem.eql(u8, s.entry, name),
+            .graphics => |s| comptime std.mem.eql(u8, s.entry_vert, name),
+            .mesh_graphics => |s| comptime std.mem.eql(u8, s.entry_mesh, name),
+        };
+        if (matches) return self.pipelines[i];
+    }
+    @compileError("no pipeline named: " ++ name);
+}
+
+pub fn buildCompute(self: *Self, compute_code: []const u32) c.VkPipeline {
+    var builder: PipelineBuilder = .init(self);
     builder.addShader(.compute, compute_code);
-    self.pipelines.add(builder.buildComputePipeline());
+    return builder.buildComputePipeline();
 }
 
-pub fn addGraphicsPipeline(self: *Self, vertex_code: anytype, fragment_code: anytype) void {
-    var pipelineBuilder: PipelineBuilder = .init(self.device, self.alloc_callbacks);
+pub fn buildGraphics(self: *Self, vertex_code: []const u32, fragment_code: []const u32) c.VkPipeline {
+    var pipelineBuilder: PipelineBuilder = .init(self);
     pipelineBuilder.addShader(.vertex, vertex_code);
     pipelineBuilder.addShader(.fragment, fragment_code);
     pipelineBuilder.setInputTopology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
@@ -103,11 +131,11 @@ pub fn addGraphicsPipeline(self: *Self, vertex_code: anytype, fragment_code: any
     pipelineBuilder.enableDepthtest(true, c.VK_COMPARE_OP_LESS);
     pipelineBuilder.setColorAttachmentFormat(renderformat);
     pipelineBuilder.setDepthFormat(depthformat);
-    self.pipelines.add(pipelineBuilder.buildPipeline());
+    return pipelineBuilder.buildGraphicsPipeline();
 }
 
-pub fn addMeshGraphicsPipeline(self: *Self, vertex_code: anytype, fragment_code: anytype) void {
-    var pipelineBuilder: PipelineBuilder = .init(self.device, self.alloc_callbacks);
+pub fn buildMeshGraphics(self: *Self, vertex_code: []const u32, fragment_code: []const u32) c.VkPipeline {
+    var pipelineBuilder: PipelineBuilder = .init(self);
     pipelineBuilder.addShader(.mesh, vertex_code);
     pipelineBuilder.addShader(.fragment, fragment_code);
     pipelineBuilder.setInputTopology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
@@ -120,5 +148,5 @@ pub fn addMeshGraphicsPipeline(self: *Self, vertex_code: anytype, fragment_code:
     pipelineBuilder.enableDepthtest(true, c.VK_COMPARE_OP_LESS);
     pipelineBuilder.setColorAttachmentFormat(renderformat);
     pipelineBuilder.setDepthFormat(depthformat);
-    self.pipelines.add(pipelineBuilder.buildPipeline());
+    return pipelineBuilder.buildGraphicsPipeline();
 }

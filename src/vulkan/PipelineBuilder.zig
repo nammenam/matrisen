@@ -4,6 +4,7 @@ const errors = @import("errors.zig");
 const checkVkPanic = errors.checkVkPanic;
 const linalg = @import("../linalg.zig");
 const Core = @import("Core.zig");
+const PipelineManager = @import("PipelineManager.zig");
 
 pub const PolygonMode = enum(c_int) {
     fill = c.VK_POLYGON_MODE_FILL,
@@ -18,7 +19,7 @@ const MAX_STAGES = 2;
 const Self = @This();
 
 device: c.VkDevice,
-alloc_callbacks: ?c.VkAllocationCallbacks,
+alloc_callbacks: ?*c.VkAllocationCallbacks,
 
 layout: c.VkPipelineLayout,
 topology: c_int = c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
@@ -35,10 +36,10 @@ depth_stencil: c.VkPipelineDepthStencilStateCreateInfo,
 render_info: c.VkPipelineRenderingCreateInfo,
 color_attachment_format: c.VkFormat,
 
-pub fn init(device: c.VkDevice, alloc_callbacks: ?c.VkAllocationCallbacks) Self {
+pub fn init(pipeline_manager: *PipelineManager) Self {
     var builder: Self = .{
-        .alloc_callbacks = alloc_callbacks,
-        .device = device,
+        .alloc_callbacks = pipeline_manager.alloc_callbacks,
+        .device = pipeline_manager.device,
         .shader_stages = @splat(.{}),
         .input_assembly = undefined,
         .rasterizer = undefined,
@@ -47,6 +48,8 @@ pub fn init(device: c.VkDevice, alloc_callbacks: ?c.VkAllocationCallbacks) Self 
         .depth_stencil = undefined,
         .render_info = undefined,
         .color_attachment_format = c.VK_FORMAT_UNDEFINED,
+        .layout = pipeline_manager.sharedpipelinelayout,
+        .stage_count = 0,
     };
     builder.clear();
     return builder;
@@ -84,7 +87,7 @@ pub fn buildGraphicsPipeline(self: *Self) c.VkPipeline {
         .sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = &self.render_info,
         .stageCount = @as(u32, @intCast(self.shader_stages.len)),
-        .pStages = self.shader_stages.ptr,
+        .pStages = &self.shader_stages,
         .pVertexInputState = &vertex_input_info,
         .pInputAssemblyState = &self.input_assembly,
         .pViewportState = &viewport_state,
@@ -105,7 +108,13 @@ pub fn buildGraphicsPipeline(self: *Self) c.VkPipeline {
     pipeline_info.pDynamicState = &dynamic_state_info;
 
     var pipeline: c.VkPipeline = undefined;
-    if (c.vkCreateGraphicsPipelines(self.device, null, 1, &pipeline_info, null, &pipeline) == c.VK_SUCCESS) {
+    const result = c.vkCreateGraphicsPipelines(self.device, null, 1, &pipeline_info, null, &pipeline);
+
+    for (self.shader_stages[0..self.stage_count]) |stage| {
+        c.vkDestroyShaderModule(self.device, stage.module, self.alloc_callbacks);
+    }
+
+    if (result == c.VK_SUCCESS) {
         return pipeline;
     } else {
         return null;
@@ -120,7 +129,13 @@ pub fn buildComputePipeline(self: *Self) c.VkPipeline {
     };
 
     var pipeline: c.VkPipeline = undefined;
-    if (c.vkCreateComputePipelines(self.device, null, 1, &pipeline_info, null, &pipeline) == c.VK_SUCCESS) {
+    const result = c.vkCreateComputePipelines(self.device, null, 1, &pipeline_info, null, &pipeline);
+
+    for (self.shader_stages[0..self.stage_count]) |stage| {
+        c.vkDestroyShaderModule(self.device, stage.module, self.alloc_callbacks);
+    }
+
+    if (result == c.VK_SUCCESS) {
         return pipeline;
     } else {
         return null;
@@ -235,17 +250,15 @@ pub fn enableBlendingAlpha(self: *Self) void {
 
 pub fn createShaderModule(
     device: c.VkDevice,
-    code: []const u8,
+    code: []const u32,
     alloc_callback: ?*c.VkAllocationCallbacks,
 ) ?c.VkShaderModule {
-    std.errors.assert(code.len % 4 == 0);
-
-    const data: *const u32 = @ptrCast(@alignCast(code.ptr));
+    // std.debug.assert(code.len % 4 == 0);
 
     const shader_module_ci: c.VkShaderModuleCreateInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .codeSize = code.len,
-        .pCode = data,
+        .codeSize = code.len * @sizeOf(u32),
+        .pCode = code.ptr,
     };
 
     var shader_module: c.VkShaderModule = undefined;
@@ -253,11 +266,8 @@ pub fn createShaderModule(
     return shader_module;
 }
 
-pub fn addShader(self: *Self, stage: Stage, shader_code: anytype) void {
-    const shader_code_array align(4) = @embedFile(shader_code).*;
-    const shader_code_bytes = std.mem.bytesAsSlice(u8, &shader_code_array);
-    const shader_mod = createShaderModule(self.device, shader_code_bytes, self.alloc_callbacks) orelse null;
-    defer c.vkDestroyShaderModule(self.device, shader_mod, self.alloc_callbacks);
+pub fn addShader(self: *Self, stage: Stage, shader_code: []const u32) void {
+    const shader_mod = createShaderModule(self.device, shader_code, self.alloc_callbacks) orelse null;
 
     var stage_info: c.VkPipelineShaderStageCreateInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -265,7 +275,7 @@ pub fn addShader(self: *Self, stage: Stage, shader_code: anytype) void {
         .pName = "main",
     };
     switch (stage) {
-        .compute => stage_info.sType = c.VK_SHADER_STAGE_COMPUTE_BIT,
+        .compute => stage_info.stage = c.VK_SHADER_STAGE_COMPUTE_BIT,
         .vertex => stage_info.stage = c.VK_SHADER_STAGE_VERTEX_BIT,
         .fragment => stage_info.stage = c.VK_SHADER_STAGE_FRAGMENT_BIT,
         .mesh => stage_info.stage = c.VK_SHADER_STAGE_MESH_BIT_EXT,
