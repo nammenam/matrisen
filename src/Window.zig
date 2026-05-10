@@ -1,4 +1,4 @@
-const c = @import("clibs/clibs.zig").libs;
+const c = @import("c");
 const std = @import("std");
 const log = std.log.scoped(.window);
 const Core = @import("vulkan/Core.zig");
@@ -27,13 +27,13 @@ pub fn deinit(self: *Self) void {
 pub fn createSurface(
     self: *Self,
     instance: Instance,
-    allocationcallbacks: ?*c.VkAllocationCallbacks,
+    alloc_callbacks: ?*c.VkAllocationCallbacks,
 ) c.VkSurfaceKHR {
     var surface: c.VkSurfaceKHR = undefined;
     checkSdl(c.SDL_Vulkan_CreateSurface(
         self.handle,
         instance.handle,
-        allocationcallbacks,
+        alloc_callbacks,
         &surface,
     ));
     log.info("created surface", .{});

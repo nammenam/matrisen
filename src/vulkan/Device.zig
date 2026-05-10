@@ -1,6 +1,6 @@
-const c = @import("../clibs/clibs.zig").libs;
+const c = @import("c");
 const std = @import("std");
-const checkVkPanic = @import("debug.zig").checkVkPanic;
+const checkVkPanic = @import("errors.zig").checkVkPanic;
 const log = std.log.scoped(.device);
 const required_device_extensions: []const [*c]const u8 = &.{ "VK_KHR_swapchain", "VK_EXT_mesh_shader" };
 const PhysicalDevice = @import("PhysicalDevice.zig");
@@ -66,10 +66,10 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) !Self {
         },
     };
 
-    var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo){};
+    var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo).empty;
     defer queue_create_infos.deinit(alloc);
     const queue_priorities: f32 = 1.0;
-    var queue_family_set = std.AutoArrayHashMapUnmanaged(u32, void){};
+    var queue_family_set = std.AutoArrayHashMapUnmanaged(u32, void).empty;
     queue_family_set.put(alloc, physical_device.graphics_queue_family, {}) catch {
         log.err("failed to alloc", .{});
         @panic("");

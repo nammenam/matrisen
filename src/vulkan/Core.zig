@@ -7,21 +7,21 @@
 const std = @import("std");
 const log = std.log.scoped(.core);
 const errors = @import("errors.zig");
-const c = @import("../clibs/clibs.zig").libs;
+const c = @import("c");
 const config = @import("config");
 
 const Camera = @import("../Camera.zig");
 const Device = @import("Device.zig");
-const PhysicalDevice = @import("Setup/PhysicalDevice.zig");
-const Swapchain = @import("Setup/Swapchain.zig");
-const Instance = @import("Setup/Instance.zig");
-const FrameContext = @import("CommandContexts/FrameContext.zig");
-const AsyncContext = @import("CommandContexts/AsyncContext.zig");
+const PhysicalDevice = @import("PhysicalDevice.zig");
+const Swapchain = @import("Swapchain.zig");
+const Instance = @import("Instance.zig");
+const FrameContext = @import("FrameContext.zig");
+const AsyncContext = @import("AsyncContext.zig");
 const Window = @import("../Window.zig");
 const ImageAllocator = @import("ImageAllocator.zig");
-const BufferManager = @import("BufferManager/BufferManager.zig");
-const PipelineManager = @import("PipelineManager/PipelineManager.zig");
-const DescriptorManager = @import("DescriptorManager/DescriptorManager.zig");
+const BufferManager = @import("BufferManager.zig");
+const PipelineManager = @import("PipelineManager.zig");
+const DescriptorManager = @import("DescriptorManager.zig");
 
 const Self = @This();
 
@@ -49,7 +49,7 @@ buffermanager: BufferManager,
 instance: Instance,
 device: Device,
 physicaldevice: PhysicalDevice,
-allocationcallbacks: c.VkAllocationCallbacks,
+alloc_callbacks: ?*c.VkAllocationCallbacks,
 
 /// Screen resources
 surface: c.VkSurfaceKHR,
@@ -67,9 +67,9 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
     defer arenaallocator.deinit();
     const initallocator = arenaallocator.allocator();
 
-    const allocationcallbacks: c.VkAllocationCallbacks = null;
-    const instance: Instance = .init(initallocator, allocationcallbacks);
-    const surface = window.createSurface(instance, allocationcallbacks);
+    const alloc_callbacks: ?*c.VkAllocationCallbacks = null;
+    const instance: Instance = .init(initallocator, alloc_callbacks);
+    const surface = window.createSurface(instance, alloc_callbacks);
     const physicaldevice: PhysicalDevice = .select(initallocator, instance.handle, surface);
     const device: Device = Device.init(initallocator, physicaldevice) catch {
         @panic("");
@@ -84,7 +84,7 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
         device.handle,
         surface,
         windowextent,
-        allocationcallbacks,
+        alloc_callbacks,
     );
     const drawextent2d = setRenderScale(swapchain.extent, renderscale);
     const drawextent3d: c.VkExtent3D = .{
@@ -92,23 +92,27 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
         .height = drawextent2d.height,
         .depth = 1,
     };
-    var imageallocator: ImageAllocator = .init(device.handle, gpuallocator, allocationcallbacks);
+    var imageallocator: ImageAllocator = .init(device.handle, gpuallocator, alloc_callbacks);
     const drawimage = imageallocator.createDrawImage(drawextent2d, renderformat);
     const renderimage = imageallocator.createRenderImage(drawextent2d, renderformat);
     const depthimage = imageallocator.createDepthImage(drawextent3d, depthformat);
-    const pipelinemanager: PipelineManager = .init(allocator, device.handle, allocationcallbacks);
+    const pipelinemanager: PipelineManager = .init(allocator, device.handle, alloc_callbacks);
 
-    var framecontexts: [multibuffering]FrameContext = @splat(.{});
-    for (&framecontexts) |*framecontext| framecontext.init(device, physicaldevice, allocationcallbacks);
+    const framecontexts: [multibuffering]FrameContext = @splat(FrameContext.init(
+        device.handle,
+        device.graphics_queue,
+        physicaldevice,
+        alloc_callbacks,
+    ));
 
-    const asynccontext: AsyncContext = .init(device, physicaldevice, allocationcallbacks);
-    const buffermanager: BufferManager = .init(device.handle, gpuallocator, allocationcallbacks);
-    const descriptormanager: DescriptorManager = .init(allocator, device, pipelinemanager);
+    const asynccontext: AsyncContext = .init(device, physicaldevice, alloc_callbacks);
+    const buffermanager: BufferManager = .init(device.handle, gpuallocator, alloc_callbacks);
+    const descriptormanager: DescriptorManager = .init(allocator, device.handle, pipelinemanager);
 
     return .{
         .cpuallocator = allocator,
         .gpuallocator = gpuallocator,
-        .allocationcallbacks = allocationcallbacks,
+        .alloc_callbacks = alloc_callbacks,
         .asynccontext = asynccontext,
         .framecontexts = framecontexts,
         .surface = surface,
@@ -130,19 +134,19 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
 
 pub fn deinit(self: *Self) void {
     errors.checkVkPanic(c.vkDeviceWaitIdle(self.device.handle));
-    defer self.instance.deinit(self.allocationcallbacks);
-    defer c.vkDestroySurfaceKHR(self.instance.handle, self.surface, self.allocationcallbacks);
-    defer c.vkDestroyDevice(self.device.handle, self.allocationcallbacks);
+    defer self.instance.deinit();
+    defer c.vkDestroySurfaceKHR(self.instance.handle, self.surface, self.alloc_callbacks);
+    defer c.vkDestroyDevice(self.device.handle, self.alloc_callbacks);
     defer c.vmaDestroyAllocator(self.gpuallocator);
-    defer self.swapchain.deinit(self.cpuallocator, self.device.handle, self.allocationcallbacks);
+    defer self.swapchain.deinit(self.cpuallocator);
     defer self.imageallocator.deinitImage(self.drawimage);
     defer self.imageallocator.deinitImage(self.renderimage);
     defer self.imageallocator.deinitImage(self.depthimage);
-    defer for (&self.framecontexts) |*frame| frame.deinit(self.device, self.allocationcallbacks);
-    defer self.asynccontext.deinit(self.device, self.allocationcallbacks);
-    defer self.pipelinemanager.deinit(self.device.handle, self.allocationcallbacks);
-    defer self.descriptormanager.deinit(self.cpuallocator, self.device);
-    defer self.buffermanager.destroyBuffers(&self.bufferallocator);
+    defer for (&self.framecontexts) |*frame| frame.deinit();
+    defer self.asynccontext.deinit();
+    defer self.pipelinemanager.deinit();
+    defer self.descriptormanager.deinit(self.cpuallocator);
+    defer self.buffermanager.destroyBuffers();
 }
 
 pub fn switch_frame(self: *Self) void {
@@ -168,7 +172,7 @@ fn makeGpuAllocator(
 
 pub fn resize(self: *Self, window: *Window) void {
     errors.checkVkPanic(c.vkDeviceWaitIdle(self.device.handle));
-    self.swapchain.deinit(self.cpuallocator, self.device.handle, self.allocationcallbacks);
+    self.swapchain.deinit(self.cpuallocator);
     self.imageallocator.deinitImage(self.drawimage);
     self.imageallocator.deinitImage(self.renderimage);
     self.imageallocator.deinitImage(self.depthimage);
@@ -180,7 +184,7 @@ pub fn resize(self: *Self, window: *Window) void {
         self.device.handle,
         self.surface,
         windowextent,
-        self.allocationcallbacks,
+        self.alloc_callbacks,
     );
     self.drawextent2d = setRenderScale(self.swapchain.extent, renderscale);
     self.drawextent3d = .{ .width = self.drawextent2d.width, .height = self.drawextent2d.height, .depth = 1 };
@@ -206,7 +210,7 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     var frame = &self.framecontexts[self.currentframe];
     const cmd = frame.command_buffer;
 
-    frame.beginFrame(self) catch |err| {
+    frame.beginFrame(&self.swapchain) catch |err| {
         if (err == error.SwapchainOutOfDate or window.state.resizerequest) {
             self.resize(window);
             window.state.resizerequest = false;
@@ -226,7 +230,7 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     self.recordGraphicsPass(frame, cmd, count_offset);
 
     // Submit
-    frame.endFrame(self);
+    frame.endFrame(&self.swapchain);
     self.framenumber +%= 1;
     self.switch_frame();
 }

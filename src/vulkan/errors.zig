@@ -1,16 +1,5 @@
-const c = @import("../clibs/clibs.zig").libs;
+const c = @import("c");
 const std = @import("std");
-
-pub fn allocationcallbacks() c.VkAllocationCallbacks {
-    return .{
-        .pUserData = null,
-        .pfnFree = null,
-        .pfnAllocation = null,
-        .pfnInternalAllocation = null,
-        .pfnInternalFree = null,
-        .pfnReallocation = null,
-    };
-}
 
 pub fn checkVk(result: c.VkResult) !void {
     return switch (result) {

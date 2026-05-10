@@ -1,12 +1,14 @@
-const c = @import("../clibs/clibs.zig").libs;
+const c = @import("c");
 const std = @import("std");
-const debug = @import("debug.zig");
+const errors = @import("errors.zig");
 const log = std.log.scoped(.swapchain);
 const Core = @import("Core.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
 
 const Self = @This();
 
+device: c.VkDevice,
+alloc_callbacks: ?*c.VkAllocationCallbacks,
 handle: c.VkSwapchainKHR = null,
 format: c.VkFormat = undefined,
 extent: c.VkExtent2D = .{},
@@ -26,7 +28,7 @@ const CreateOptions = struct {
     triple_buffer: bool = false,
     window_width: u32 = 0,
     window_height: u32 = 0,
-    alloc_cb: ?*c.VkAllocationCallbacks = null,
+    alloc_cb: *?c.VkAllocationCallbacks = null,
 };
 
 pub const SupportInfo = struct {
@@ -34,25 +36,33 @@ pub const SupportInfo = struct {
     formats: []c.VkSurfaceFormatKHR = &.{},
     present_modes: []c.VkPresentModeKHR = &.{},
 
-    pub fn init(allocator: std.mem.Allocator, device: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) SupportInfo {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        device: c.VkPhysicalDevice,
+        surface: c.VkSurfaceKHR,
+    ) SupportInfo {
         var capabilities: c.VkSurfaceCapabilitiesKHR = undefined;
-        debug.checkVkPanic(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &capabilities));
+        errors.checkVkPanic(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &capabilities));
 
         var format_count: u32 = undefined;
-        debug.checkVkPanic(c.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, null));
+        errors.checkVkPanic(c.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, null));
         const formats = allocator.alloc(c.VkSurfaceFormatKHR, format_count) catch {
             log.err("failed to alloc", .{});
             @panic("");
         };
-        debug.checkVkPanic(c.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, formats.ptr));
+        errors.checkVkPanic(
+            c.vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, formats.ptr),
+        );
 
         var present_mode_count: u32 = undefined;
-        debug.checkVkPanic(c.vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, null));
+        errors.checkVkPanic(
+            c.vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, null),
+        );
         const present_modes = allocator.alloc(c.VkPresentModeKHR, present_mode_count) catch {
             log.err("failed to alloc", .{});
             @panic("");
         };
-        debug.checkVkPanic(c.vkGetPhysicalDeviceSurfacePresentModesKHR(
+        errors.checkVkPanic(c.vkGetPhysicalDeviceSurfacePresentModesKHR(
             device,
             surface,
             &present_mode_count,
@@ -77,11 +87,14 @@ pub fn init(
     device: c.VkDevice,
     surface: c.VkSurfaceKHR,
     windowextent: c.VkExtent2D,
-    allocationcallbacks: ?*c.VkAllocationCallbacks,
+    alloc_callbacks: ?*c.VkAllocationCallbacks,
 ) Self {
     const old_swapchain = null;
     const vsync = true;
-    const desired_format = .{ .format = c.VK_FORMAT_B8G8R8A8_SRGB, .colorSpace = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+    const desired_format = .{
+        .format = c.VK_FORMAT_B8G8R8A8_SRGB,
+        .colorSpace = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+    };
 
     const supportinfo: SupportInfo = .init(allocator, physicaldevice.handle, surface);
     defer supportinfo.deinit(allocator);
@@ -156,23 +169,23 @@ pub fn init(
     }
 
     var swapchain: c.VkSwapchainKHR = undefined;
-    debug.checkVkPanic(c.vkCreateSwapchainKHR(
+    errors.checkVkPanic(c.vkCreateSwapchainKHR(
         device,
         &swapchain_info,
-        allocationcallbacks,
+        alloc_callbacks,
         &swapchain,
     ));
-    errdefer c.vkDestroySwapchainKHR(device, swapchain, allocationcallbacks);
+    errdefer c.vkDestroySwapchainKHR(device, swapchain, alloc_callbacks);
 
     // Try and fetch the images from the swpachain.
     var swapchain_image_count: u32 = undefined;
-    debug.checkVkPanic(c.vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_count, null));
+    errors.checkVkPanic(c.vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_count, null));
     const swapchain_images = allocator.alloc(c.VkImage, swapchain_image_count) catch {
         log.err("failed to alloc", .{});
         @panic("");
     };
     errdefer allocator.free(swapchain_images);
-    debug.checkVkPanic(c.vkGetSwapchainImagesKHR(
+    errors.checkVkPanic(c.vkGetSwapchainImagesKHR(
         device,
         swapchain,
         &swapchain_image_count,
@@ -195,10 +208,10 @@ pub fn init(
     const semaphore_ci = c.VkSemaphoreCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
     for (swapchain_images, swapchain_image_views, semaphores) |img, *view, *semaphore| {
         view.* = createImageViews(device, img, format.format);
-        debug.checkVkPanic(c.vkCreateSemaphore(
+        errors.checkVkPanic(c.vkCreateSemaphore(
             device,
             &semaphore_ci,
-            allocationcallbacks,
+            alloc_callbacks,
             semaphore,
         ));
     }
@@ -210,19 +223,19 @@ pub fn init(
         .images = swapchain_images,
         .views = swapchain_image_views,
         .semaphores = semaphores,
+        .device = device,
+        .alloc_callbacks = alloc_callbacks,
     };
 }
 
 pub fn deinit(
     self: *Self,
     allocator: std.mem.Allocator,
-    device: c.VkDevice,
-    allocationcallbacks: ?*c.VkAllocationCallbacks,
 ) void {
-    c.vkDestroySwapchainKHR(device, self.handle, allocationcallbacks);
+    c.vkDestroySwapchainKHR(self.device, self.handle, self.alloc_callbacks);
     for (self.views, self.semaphores) |view, semaphore| {
-        c.vkDestroyImageView(device, view, null);
-        c.vkDestroySemaphore(device, semaphore, allocationcallbacks);
+        c.vkDestroyImageView(self.device, view, null);
+        c.vkDestroySemaphore(self.device, semaphore, self.alloc_callbacks);
     }
     allocator.free(self.views);
 }
@@ -283,6 +296,6 @@ fn createImageViews(device: c.VkDevice, img: c.VkImage, format: c.VkFormat) c.Vk
     });
 
     var image_view: c.VkImageView = undefined;
-    debug.checkVkPanic(c.vkCreateImageView(device, &view_info, null, &image_view));
+    errors.checkVkPanic(c.vkCreateImageView(device, &view_info, null, &image_view));
     return image_view;
 }

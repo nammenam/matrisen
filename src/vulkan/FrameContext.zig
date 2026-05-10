@@ -1,27 +1,33 @@
-const c = @import("../clibs/clibs.zig").libs;
+const c = @import("c");
 const std = @import("std");
-const debug = @import("debug.zig");
-const log = std.log.scoped(.framecontext);
+const errors = @import("errors.zig");
 const Core = @import("Core.zig");
 const Device = @import("Device.zig");
 const PhysicalDevice = @import("PhysicalDevice.zig");
+const Swapchain = @import("Swapchain.zig");
 
 const Self = @This();
 
-handle: c.VkSwapchainKHR = null,
-device: Device = null,
-acquiresemaphore: c.VkSemaphore = null, // Signaled by Swapchain when image is ready
-fence: c.VkFence = null, // Signaled by GPU when drawing is done
-command_pool: c.VkCommandPool = null,
-command_buffer: c.VkCommandBuffer = null,
-swapchainindex: u32 = 0,
+device: c.VkDevice,
+queue: c.VkQueue,
+alloc_callbacks: ?*c.VkAllocationCallbacks,
+acquiresemaphore: c.VkSemaphore, // Signaled by Swapchain when image is ready
+fence: c.VkFence, // Signaled by GPU when drawing is done
+command_pool: c.VkCommandPool,
+command_buffer: c.VkCommandBuffer,
+swapchainindex: u32,
 
 pub fn init(
-    self: *Self,
-    device: Device,
+    device: c.VkDevice,
+    queue: c.VkQueue,
     physicaldevice: PhysicalDevice,
-    allocationcallbacks: ?*c.VkAllocationCallbacks,
-) void {
+    alloc_callbacks: ?*c.VkAllocationCallbacks,
+) Self {
+    var command_pool: c.VkCommandPool = undefined;
+    var command_buffer: c.VkCommandBuffer = undefined;
+    var acquiresemaphore: c.VkSemaphore = undefined;
+    var fence: c.VkFence = undefined;
+
     const semaphore_ci = c.VkSemaphoreCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
     const fence_ci = c.VkFenceCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
@@ -29,39 +35,50 @@ pub fn init(
     };
 
     const command_pool_info = graphics_cmd_pool_info(physicaldevice.graphics_queue_family);
-    debug.checkVkPanic(c.vkCreateCommandPool(
-        device.handle,
+    errors.checkVkPanic(c.vkCreateCommandPool(
+        device,
         &command_pool_info,
-        allocationcallbacks,
-        &self.command_pool,
+        alloc_callbacks,
+        &command_pool,
     ));
 
-    const command_buffer_info = graphics_cmdbuffer_info(self.command_pool);
-    debug.checkVkPanic(c.vkAllocateCommandBuffers(device.handle, &command_buffer_info, &self.command_buffer));
+    const command_buffer_info = graphics_cmdbuffer_info(command_pool);
+    errors.checkVkPanic(
+        c.vkAllocateCommandBuffers(device, &command_buffer_info, &command_buffer),
+    );
 
-    debug.checkVkPanic(c.vkCreateSemaphore(
-        device.handle,
+    errors.checkVkPanic(c.vkCreateSemaphore(
+        device,
         &semaphore_ci,
-        allocationcallbacks,
-        &self.acquiresemaphore,
+        alloc_callbacks,
+        &acquiresemaphore,
     ));
-    debug.checkVkPanic(c.vkCreateFence(device.handle, &fence_ci, allocationcallbacks, &self.fence));
-    self.device = device;
-    log.info("Created framecontext", .{});
+    errors.checkVkPanic(c.vkCreateFence(device, &fence_ci, alloc_callbacks, &fence));
+
+    return .{
+        .command_pool = command_pool,
+        .acquiresemaphore = acquiresemaphore,
+        .command_buffer = command_buffer,
+        .device = device,
+        .fence = fence,
+        .swapchainindex = 0,
+        .alloc_callbacks = alloc_callbacks,
+        .queue = queue,
+    };
 }
 
-pub fn deinit(self: *Self, device: Device, allocationcallbacks: ?*c.VkAllocationCallbacks) void {
-    c.vkDestroyCommandPool(device.handle, self.command_pool, allocationcallbacks);
-    c.vkDestroyFence(device.handle, self.fence, allocationcallbacks); // Fixed name
-    c.vkDestroySemaphore(device.handle, self.acquiresemaphore, allocationcallbacks);
+pub fn deinit(self: *Self) void {
+    c.vkDestroyCommandPool(self.device, self.command_pool, self.alloc_callbacks);
+    c.vkDestroyFence(self.device, self.fence, self.alloc_callbacks);
+    c.vkDestroySemaphore(self.device, self.acquiresemaphore, self.alloc_callbacks);
 }
 
-pub fn beginFrame(self: *Self) !void {
+pub fn beginFrame(self: *Self, swapchain: *Swapchain) !void {
     const timeout: u64 = 4_000_000_000; // 4 seconds
-    debug.checkVkPanic(c.vkWaitForFences(self.device.handle, 1, &self.fence, c.VK_TRUE, timeout));
+    errors.checkVkPanic(c.vkWaitForFences(self.device, 1, &self.fence, c.VK_TRUE, timeout));
     const e = c.vkAcquireNextImageKHR(
-        self.device.handle,
-        self.swapchain,
+        self.device,
+        swapchain.handle,
         timeout,
         self.acquiresemaphore,
         null,
@@ -71,20 +88,20 @@ pub fn beginFrame(self: *Self) !void {
         return error.SwapchainOutOfDate;
     }
 
-    debug.checkVkPanic(c.vkResetFences(self.device.handle, 1, &self.fence));
-    debug.checkVkPanic(c.vkResetCommandBuffer(self.command_buffer, 0));
+    errors.checkVkPanic(c.vkResetFences(self.device, 1, &self.fence));
+    errors.checkVkPanic(c.vkResetCommandBuffer(self.command_buffer, 0));
 
     const cmd_begin_info: c.VkCommandBufferBeginInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    debug.checkVkPanic(c.vkBeginCommandBuffer(self.command_buffer, &cmd_begin_info));
+    errors.checkVkPanic(c.vkBeginCommandBuffer(self.command_buffer, &cmd_begin_info));
 }
 
-pub fn endFrame(self: *Self) void {
+pub fn endFrame(self: *Self, swapchain: *Swapchain) void {
     const cmd = self.command_buffer;
 
-    debug.checkVkPanic(c.vkEndCommandBuffer(cmd));
+    errors.checkVkPanic(c.vkEndCommandBuffer(cmd));
 
     const cmd_info = c.VkCommandBufferSubmitInfo{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
@@ -93,14 +110,14 @@ pub fn endFrame(self: *Self) void {
 
     const wait_info = c.VkSemaphoreSubmitInfo{
         .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .semaphore = self.acquiresemaphore, // Keep this!
+        .semaphore = self.acquiresemaphore,
         // .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
         .stageMask = c.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
     };
 
     const signal_info = c.VkSemaphoreSubmitInfo{
         .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-        .semaphore = self.swapchain.semaphores[self.swapchainindex],
+        .semaphore = swapchain.semaphores[self.swapchainindex],
         .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
     };
 
@@ -114,18 +131,18 @@ pub fn endFrame(self: *Self) void {
         .pSignalSemaphoreInfos = &signal_info,
     };
 
-    debug.checkVkPanic(c.vkQueueSubmit2(self.device.graphics_queue, 1, &submit, self.fence));
+    errors.checkVkPanic(c.vkQueueSubmit2(self.queue, 1, &submit, self.fence));
 
     const present_info = c.VkPresentInfoKHR{
         .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &self.swapchain.semaphores[self.swapchainindex],
+        .pWaitSemaphores = &swapchain.semaphores[self.swapchainindex],
         .swapchainCount = 1,
-        .pSwapchains = &self.swapchain,
+        .pSwapchains = &swapchain.handle,
         .pImageIndices = &self.swapchainindex,
     };
 
-    _ = c.vkQueuePresentKHR(self.device.graphics_queue, &present_info);
+    _ = c.vkQueuePresentKHR(self.queue, &present_info);
 }
 
 pub fn beginGraphicsPass(self: *Self, core: *Core) void {

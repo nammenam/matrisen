@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("../clibs/clibs.zig").libs;
+const c = @import("c");
 
 writes: std.ArrayList(c.VkWriteDescriptorSet) = undefined,
 buffer_infos: std.ArrayList(c.VkDescriptorBufferInfo) = undefined,

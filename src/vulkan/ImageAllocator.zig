@@ -1,5 +1,5 @@
-const c = @import("../clibs/clibs.zig").libs;
-const checkVkPanic = @import("debug.zig").checkVkPanic;
+const c = @import("c");
+const checkVkPanic = @import("errors.zig").checkVkPanic;
 const std = @import("std");
 const log = std.log.scoped(.images);
 const AsyncContext = @import("AsyncContext.zig");
@@ -10,12 +10,12 @@ const Self = @This();
 
 device: c.VkDevice,
 gpuallocator: c.VmaAllocator,
-allocationcallbacks: ?*c.VkAllocationCallbacks,
+alloc_callbacks: ?*c.VkAllocationCallbacks,
 
-pub fn init(device: c.VkDevice, gpuallocator: c.VmaAllocator, allocationcallbacks: ?*c.VkAllocationCallbacks) Self {
+pub fn init(device: c.VkDevice, gpuallocator: c.VmaAllocator, alloc_callbacks: ?*c.VkAllocationCallbacks) Self {
     return .{
         .device = device,
-        .allocationcallbacks = allocationcallbacks,
+        .alloc_callbacks = alloc_callbacks,
         .gpuallocator = gpuallocator,
     };
 }
@@ -76,7 +76,7 @@ pub fn createDrawImage(
     checkVkPanic(c.vkCreateImageView(
         self.device,
         &draw_image_view_ci,
-        self.allocationcallbacks,
+        self.alloc_callbacks,
         &drawimage.view,
     ));
     return drawimage;
@@ -133,7 +133,7 @@ pub fn createRenderImage(
     checkVkPanic(c.vkCreateImageView(
         self.device,
         &resolved_view_ci,
-        self.allocationcallbacks,
+        self.alloc_callbacks,
         &renderimage.view,
     ));
     return renderimage;
@@ -188,7 +188,7 @@ pub fn createDepthImage(
     checkVkPanic(c.vkCreateImageView(
         self.device,
         &depth_image_view_ci,
-        self.allocationcallbacks,
+        self.alloc_callbacks,
         &depthimage.view,
     ));
     return depthimage;
@@ -196,7 +196,7 @@ pub fn createDepthImage(
 
 pub fn deinitImage(self: *Self, image: AllocatedImage) void {
     c.vmaDestroyImage(self.gpuallocator, image.image, image.allocation);
-    c.vkDestroyImageView(self.device, image.view, self.allocationcallbacks);
+    c.vkDestroyImageView(self.device, image.view, self.alloc_callbacks);
 }
 
 pub fn create(

@@ -1,6 +1,6 @@
 const std = @import("std");
-const debug = @import("debug.zig");
-const c = @import("../clibs/clibs.zig").libs;
+const errors = @import("errors.zig");
+const c = @import("c");
 
 const Self = @This();
 
@@ -51,6 +51,6 @@ pub fn build(
         .pNext = pnext,
     };
     var layout: c.VkDescriptorSetLayout = undefined;
-    debug.checkVkPanic(c.vkCreateDescriptorSetLayout(device, &info, null, &layout));
+    errors.checkVkPanic(c.vkCreateDescriptorSetLayout(device, &info, null, &layout));
     return layout;
 }

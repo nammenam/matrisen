@@ -1,6 +1,6 @@
 const std = @import("std");
-const c = @import("../clibs/clibs.zig").libs;
-const debug = @import("debug.zig");
+const c = @import("c");
+const errors = @import("errors.zig");
 const log = std.log.scoped(.asynccontext);
 const Core = @import("Core.zig");
 const Device = @import("Device.zig");
@@ -9,12 +9,16 @@ const PhysicalDevice = @import("PhysicalDevice.zig");
 const Self = @This();
 
 device: Device,
-allocationcallbacks: c.VkAllocationCallbacks,
+alloc_callbacks: ?*c.VkAllocationCallbacks,
 fence: c.VkFence,
 commandpool: c.VkCommandPool,
 commandbuffer: c.VkCommandBuffer,
 
-pub fn init(device: Device, physicaldevice: PhysicalDevice, allocationcallbacks: ?*c.VkAllocationCallbacks) Self {
+pub fn init(
+    device: Device,
+    physicaldevice: PhysicalDevice,
+    alloc_callbacks: ?*c.VkAllocationCallbacks,
+) Self {
     const commandpool_ci: c.VkCommandPoolCreateInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags = c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
@@ -27,17 +31,17 @@ pub fn init(device: Device, physicaldevice: PhysicalDevice, allocationcallbacks:
     var fence: c.VkFence = null;
     var commandpool: c.VkCommandPool = null;
     var commandbuffer: c.VkCommandBuffer = null;
-    debug.checkVkPanic(c.vkCreateFence(
+    errors.checkVkPanic(c.vkCreateFence(
         device.handle,
         &upload_fence_ci,
-        allocationcallbacks,
+        alloc_callbacks,
         &fence,
     ));
 
-    debug.checkVkPanic(c.vkCreateCommandPool(
+    errors.checkVkPanic(c.vkCreateCommandPool(
         device.handle,
         &commandpool_ci,
-        allocationcallbacks,
+        alloc_callbacks,
         &commandpool,
     ));
 
@@ -47,7 +51,7 @@ pub fn init(device: Device, physicaldevice: PhysicalDevice, allocationcallbacks:
         .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
     };
-    debug.checkVkPanic(c.vkAllocateCommandBuffers(
+    errors.checkVkPanic(c.vkAllocateCommandBuffers(
         device.handle,
         &upload_commandbuffer_ai,
         &commandbuffer,
@@ -55,7 +59,7 @@ pub fn init(device: Device, physicaldevice: PhysicalDevice, allocationcallbacks:
     log.info("Created asynccontext", .{});
     return .{
         .device = device,
-        .allocationcallbacks = allocationcallbacks,
+        .alloc_callbacks = alloc_callbacks,
         .fence = fence,
         .commandpool = commandpool,
         .commandbuffer = commandbuffer,
@@ -63,15 +67,15 @@ pub fn init(device: Device, physicaldevice: PhysicalDevice, allocationcallbacks:
 }
 
 pub fn deinit(self: *Self) void {
-    c.vkDestroyCommandPool(self.device.handle, self.commandpool, self.allocationcallbacks);
-    c.vkDestroyFence(self.device.handle, self.fence, self.allocationcallbacks);
+    c.vkDestroyCommandPool(self.device.handle, self.commandpool, self.alloc_callbacks);
+    c.vkDestroyFence(self.device.handle, self.fence, self.alloc_callbacks);
 }
 
 pub fn submitBegin(self: *Self) void {
-    debug.checkVk(c.vkResetFences(self.device.handle, 1, &self.fence)) catch {
+    errors.checkVk(c.vkResetFences(self.device.handle, 1, &self.fence)) catch {
         @panic("Failed to reset immidiate fence");
     };
-    debug.checkVk(c.vkResetCommandBuffer(self.commandbuffer, 0)) catch {
+    errors.checkVk(c.vkResetCommandBuffer(self.commandbuffer, 0)) catch {
         @panic("Failed to reset immidiate command buffer");
     };
     const cmd = self.commandbuffer;
@@ -80,14 +84,14 @@ pub fn submitBegin(self: *Self) void {
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    debug.checkVk(c.vkBeginCommandBuffer(cmd, &commmand_begin_ci)) catch {
+    errors.checkVk(c.vkBeginCommandBuffer(cmd, &commmand_begin_ci)) catch {
         @panic("Failed to begin command buffer");
     };
 }
 
 pub fn submitEnd(self: *Self) void {
     const cmd = self.commandbuffer;
-    debug.checkVk(c.vkEndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");
+    errors.checkVk(c.vkEndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");
 
     const cmd_info: c.VkCommandBufferSubmitInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
@@ -98,6 +102,6 @@ pub fn submitEnd(self: *Self) void {
         .commandBufferInfoCount = 1,
         .pCommandBufferInfos = &cmd_info,
     };
-    debug.checkVkPanic(c.vkQueueSubmit2(self.device.graphics_queue, 1, &submit_info, self.fence));
-    debug.checkVkPanic(c.vkWaitForFences(self.device.handle, 1, &self.fence, c.VK_TRUE, 1_000_000_000));
+    errors.checkVkPanic(c.vkQueueSubmit2(self.device.graphics_queue, 1, &submit_info, self.fence));
+    errors.checkVkPanic(c.vkWaitForFences(self.device.handle, 1, &self.fence, c.VK_TRUE, 1_000_000_000));
 }

@@ -1,4 +1,4 @@
-const c = @import("../clibs/clibs.zig").libs;
+const c = @import("c");
 const AllocatedImage = @import("ImageAllocator.zig").AllocatedImage;
 
 textures: AllocatedImage = undefined,

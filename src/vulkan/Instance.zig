@@ -1,6 +1,6 @@
-const c = @import("../clibs/clibs.zig").libs;
+const c = @import("c");
 const std = @import("std");
-const checkVkPanic = @import("debug.zig").checkVkPanic;
+const checkVkPanic = @import("errors.zig").checkVkPanic;
 const log = std.log.scoped(.instance);
 const Core = @import("Core.zig");
 
@@ -9,8 +9,9 @@ const Self = @This();
 
 handle: c.VkInstance = null,
 debug_messenger: c.VkDebugUtilsMessengerEXT = null,
+alloc_callbacks: ?*c.VkAllocationCallbacks,
 
-pub fn init(alloc: std.mem.Allocator, allocationcallbacks: ?*c.VkAllocationCallbacks) Self {
+pub fn init(alloc: std.mem.Allocator, alloc_callbacks: ?*c.VkAllocationCallbacks) Self {
     var sdl_required_extension_count: u32 = undefined;
     const sdl_extensions = c.SDL_Vulkan_GetInstanceExtensions(&sdl_required_extension_count);
     const sdl_extension_slice = sdl_extensions[0..sdl_required_extension_count];
@@ -40,7 +41,7 @@ pub fn init(alloc: std.mem.Allocator, allocationcallbacks: ?*c.VkAllocationCallb
     };
     checkVkPanic(c.vkEnumerateInstanceExtensionProperties(null, &extension_count, extension_props.ptr));
 
-    var layers = std.ArrayListUnmanaged([*c]const u8){};
+    var layers = std.ArrayList([*c]const u8).empty;
     if (debug) {
         debug = blk: for (layer_props) |layer_prop| {
             const layer_name: [*c]const u8 = @ptrCast(layer_prop.layerName[0..]);
@@ -56,7 +57,7 @@ pub fn init(alloc: std.mem.Allocator, allocationcallbacks: ?*c.VkAllocationCallb
         } else false;
     }
 
-    var extensions = std.ArrayListUnmanaged([*c]const u8){};
+    var extensions = std.ArrayList([*c]const u8).empty;
     const ExtensionFinder = struct {
         fn find(name: [*c]const u8, props: []c.VkExtensionProperties) bool {
             for (props) |prop| {
@@ -116,12 +117,12 @@ pub fn init(alloc: std.mem.Allocator, allocationcallbacks: ?*c.VkAllocationCallb
     };
 
     var instance: c.VkInstance = undefined;
-    checkVkPanic(c.vkCreateInstance(&instance_info, allocationcallbacks, &instance));
+    checkVkPanic(c.vkCreateInstance(&instance_info, alloc_callbacks, &instance));
     log.info("Created vulkan instance", .{});
 
     const debug_messenger = if (debug) blk: {
         log.info("Created vulkan debug callback messenger.", .{});
-        break :blk createDebugCallback(instance, debug_callback, allocationcallbacks);
+        break :blk createDebugCallback(instance, debug_callback, alloc_callbacks);
     } else blk: {
         break :blk null;
     };
@@ -129,6 +130,7 @@ pub fn init(alloc: std.mem.Allocator, allocationcallbacks: ?*c.VkAllocationCallb
     return .{
         .handle = instance,
         .debug_messenger = debug_messenger,
+        .alloc_callbacks = alloc_callbacks,
     };
 }
 
@@ -213,10 +215,10 @@ fn createDebugCallback(
     return null;
 }
 
-pub fn deinit(self: *Self, allocationcallbacks: ?*c.VkAllocationCallbacks) void {
-    defer c.vkDestroyInstance(self.handle, allocationcallbacks);
+pub fn deinit(self: *Self) void {
+    defer c.vkDestroyInstance(self.handle, self.alloc_callbacks);
     defer if (self.debug_messenger != null) {
         const destroyFn = getDestroyDebugUtilsMessenger(self).?;
-        destroyFn(self.handle, self.debug_messenger, allocationcallbacks);
+        destroyFn(self.handle, self.debug_messenger, self.alloc_callbacks);
     };
 }

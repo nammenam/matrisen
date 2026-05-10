@@ -12,9 +12,11 @@ const Vec4 = m.linalg.Vec4(f32);
 const Mat4x4 = m.linalg.Mat4x4(f32);
 const Mesh = m.BufferManager.Mesh;
 
-pub fn loop(engine: *Core, window: *m.Window) void {
+pub fn loop(io: std.Io, engine: *Core, window: *m.Window) !void {
     window.toggleMouseCapture();
-    var timer = std.time.Timer.start() catch @panic("Failed to start timer");
+    const t_start = std.Io.Clock.awake.now(io);
+    var t = std.Io.Clock.awake.now(io);
+
     var time: f32 = 0;
     var camera: Camera = .init;
 
@@ -22,9 +24,10 @@ pub fn loop(engine: *Core, window: *m.Window) void {
     camera.distance = 250;
 
     while (!window.state.quit) {
-        const dt_ns = timer.lap();
-        const dt_s: f32 = @as(f32, @floatFromInt(dt_ns)) / 1_000_000_000.0;
-        time += dt_s;
+        const dt = t.untilNow(io, .awake).toSeconds();
+        t = std.Io.Clock.awake.now(io);
+        std.debug.print("Took {} ns\n", .{dt});
+        time = @as(f32, @floatFromInt(t_start.untilNow(io, .awake).toNanoseconds())) / 1_000_000_000;
         window.processInput();
         // camera.firstPerson(window);
         camera.orbit(window);
@@ -33,9 +36,9 @@ pub fn loop(engine: *Core, window: *m.Window) void {
     }
 }
 
-pub fn main() !void {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    const allocator = debug_allocator.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.arena.allocator();
+    const io = init.io;
     var window: m.Window = .init(2000, 1200);
     defer window.deinit();
     var engine: Core = .init(allocator, &window);
@@ -44,5 +47,5 @@ pub fn main() !void {
     try engine.buffermanager.initEngineBuffers(&engine, &engine.descriptormanager);
     engine.buffermanager.initEmptyMesh(&engine);
     engine.buffermanager.testUI(&engine);
-    loop(&engine, &window);
+    try loop(io, &engine, &window);
 }

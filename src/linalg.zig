@@ -678,7 +678,7 @@ pub fn formatGeneric(
     const ff = std.fmt.format_float;
     const valueOptions = ff.FormatOptions{ .mode = .decimal, .precision = options.precision };
     var buffer: [ff.min_buffer_size]u8 = undefined;
-    var column_widths: [C]usize = [_]usize{0} ** C;
+    var column_widths: [C]usize = @splat(0);
     for (0..R) |row| {
         for (0..C) |column| {
             const array: [C][R]T = @bitCast(self);
@@ -705,7 +705,7 @@ pub fn formatGeneric(
             }
             _ = try writer.write(slice);
             const padding = column_widths[column] - slice.len;
-            var pad_buffer: [32]u8 = [_]u8{' '} ** 32; // TODO: Is this enough?
+            var pad_buffer: [32]u8 = @splat(' '); // TODO: Is this enough?
             _ = try writer.write(pad_buffer[0..padding]);
             if (column < C - 1) {
                 _ = try writer.write("  "); // Add space between columns

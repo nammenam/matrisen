@@ -1,6 +1,6 @@
 const std = @import("std");
-const debug = @import("debug.zig");
-const c = @import("../clibs/clibs.zig").libs;
+const errors = @import("errors.zig");
+const c = @import("c");
 
 pub const PoolSizeRatio = struct {
     ratio: f32,
@@ -80,7 +80,7 @@ pub fn allocate(
         self.full_pools.append(a, pool_to_use) catch @panic("Failed to append to full_pools");
         pool_to_use = self.get_pool(device);
         info.descriptorPool = pool_to_use;
-        debug.checkVkPanic(c.vkAllocateDescriptorSets(device, &info, &descriptor_set));
+        errors.checkVkPanic(c.vkAllocateDescriptorSets(device, &info, &descriptor_set));
     }
     self.ready_pools.append(a, pool_to_use) catch @panic("Failed to append to full_pools");
     return descriptor_set;
@@ -125,6 +125,6 @@ fn create_pool(
     };
 
     var pool: c.VkDescriptorPool = undefined;
-    debug.checkVkPanic(c.vkCreateDescriptorPool(device, &info, null, &pool));
+    errors.checkVkPanic(c.vkCreateDescriptorPool(device, &info, null, &pool));
     return pool;
 }

@@ -32,6 +32,7 @@ pub fn build(b: *Build) !void {
         .target = target,
         .root_source_file = b.path("src/systemlibraries/clibraries.h"),
     });
+
     matrisen.addImport("c", c.createModule());
 
     const exe = b.addExecutable(.{
@@ -60,10 +61,10 @@ pub fn build(b: *Build) !void {
     run_step.dependOn(&run_cmd.step);
 
     // Explicitly compile the three entry points from your scene.slang file
-    compileSlang(b, matrisen, shaders_step, "rastermain.slang", "vertexMain", "vertex", false);
-    compileSlang(b, matrisen, shaders_step, "rastermain.slang", "fragmentMain", "fragment", false);
-    compileSlang(b, matrisen, shaders_step, "rastermain_mesh.slang", "meshMain", "mesh", true);
-    compileSlang(b, matrisen, shaders_step, "rastermain_mesh.slang", "fragmentMain", "fragment", enable_meshshading);
+    compileSlang(b, matrisen, shaders_step, "rastermain.slang", "vertexMain", "vertex", enable_meshshading);
+    compileSlang(b, matrisen, shaders_step, "rastermain.slang", "fragmentMain", "fragment", enable_meshshading);
+    compileSlang(b, matrisen, shaders_step, "rastermain_mesh.slang", "meshMain", "mesh", enable_meshshading);
+    compileSlang(b, matrisen, shaders_step, "rastermain_mesh.slang", "meshFragmentMain", "fragment", enable_meshshading);
     compileSlang(b, matrisen, shaders_step, "drawcmd.slang", "drawcmdMain", "compute", enable_meshshading);
     compileSlang(b, matrisen, shaders_step, "terrain.slang", "terrainMain", "compute", enable_meshshading);
     compileSlang(b, matrisen, shaders_step, "vectorgfx.slang", "slugVertex", "vertex", enable_meshshading);

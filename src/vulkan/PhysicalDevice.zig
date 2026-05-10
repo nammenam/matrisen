@@ -1,7 +1,7 @@
-const c = @import("../clibs/clibs.zig").libs;
+const c = @import("c");
 const std = @import("std");
 const log = std.log.scoped(.physicaldevice);
-const checkVkPanic = @import("debug.zig").checkVkPanic;
+const checkVkPanic = @import("errors.zig").checkVkPanic;
 const config = @import("config");
 const api_version = @import("Instance.zig").api_version;
 const required_device_extensions: []const [*c]const u8 = &.{ "VK_KHR_swapchain", "VK_EXT_mesh_shader" };

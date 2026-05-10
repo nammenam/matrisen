@@ -64,6 +64,6 @@ void meshMain(uint3 groupId: SV_GroupID, uint groupIndex: SV_GroupIndex,
 // FRAGMENT SHADER
 // ==========================================
 [shader("fragment")]
-float4 fragmentMain(AssembledVertex in) : SV_Target {
+float4 meshFragmentMain(AssembledVertex in) : SV_Target {
   return float4(in.color, 1.0);
 }
