@@ -64,84 +64,6 @@ fn clear(self: *Self) void {
     self.render_info = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
 }
 
-pub fn buildGraphicsPipeline(self: *Self) c.VkPipeline {
-    const viewport_state: c.VkPipelineViewportStateCreateInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-        .viewportCount = 1,
-        .scissorCount = 1,
-    };
-
-    const color_blending: c.VkPipelineColorBlendStateCreateInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-        .attachmentCount = 1,
-        .pAttachments = &self.color_blend_attachment,
-        .logicOpEnable = c.VK_FALSE,
-        .logicOp = c.VK_LOGIC_OP_COPY,
-    };
-
-    const vertex_input_info: c.VkPipelineVertexInputStateCreateInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-    };
-
-    var pipeline_info: c.VkGraphicsPipelineCreateInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-        .pNext = &self.render_info,
-        .stageCount = @as(u32, @intCast(self.shader_stages.len)),
-        .pStages = &self.shader_stages,
-        .pVertexInputState = &vertex_input_info,
-        .pInputAssemblyState = &self.input_assembly,
-        .pViewportState = &viewport_state,
-        .pRasterizationState = &self.rasterizer,
-        .pMultisampleState = &self.multisample,
-        .pColorBlendState = &color_blending,
-        .pDepthStencilState = &self.depth_stencil,
-        .layout = self.layout,
-    };
-
-    const dynamic_state = [_]c.VkDynamicState{ c.VK_DYNAMIC_STATE_VIEWPORT, c.VK_DYNAMIC_STATE_SCISSOR };
-    const dynamic_state_info: c.VkPipelineDynamicStateCreateInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-        .dynamicStateCount = dynamic_state.len,
-        .pDynamicStates = &dynamic_state[0],
-    };
-
-    pipeline_info.pDynamicState = &dynamic_state_info;
-
-    var pipeline: c.VkPipeline = undefined;
-    const result = c.vkCreateGraphicsPipelines(self.device, null, 1, &pipeline_info, null, &pipeline);
-
-    for (self.shader_stages[0..self.stage_count]) |stage| {
-        c.vkDestroyShaderModule(self.device, stage.module, self.alloc_callbacks);
-    }
-
-    if (result == c.VK_SUCCESS) {
-        return pipeline;
-    } else {
-        return null;
-    }
-}
-
-pub fn buildComputePipeline(self: *Self) c.VkPipeline {
-    const pipeline_info = c.VkComputePipelineCreateInfo{
-        .sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-        .stage = self.shader_stages[0],
-        .layout = self.layout,
-    };
-
-    var pipeline: c.VkPipeline = undefined;
-    const result = c.vkCreateComputePipelines(self.device, null, 1, &pipeline_info, null, &pipeline);
-
-    for (self.shader_stages[0..self.stage_count]) |stage| {
-        c.vkDestroyShaderModule(self.device, stage.module, self.alloc_callbacks);
-    }
-
-    if (result == c.VK_SUCCESS) {
-        return pipeline;
-    } else {
-        return null;
-    }
-}
-
 pub fn setInputTopology(self: *Self, topology: c.VkPrimitiveTopology) void {
     self.input_assembly.topology = topology;
     self.input_assembly.primitiveRestartEnable = c.VK_FALSE;
@@ -282,4 +204,82 @@ pub fn addShader(self: *Self, stage: Stage, shader_code: []const u32) void {
     }
     self.shader_stages[self.stage_count] = stage_info;
     self.stage_count += 1;
+}
+
+pub fn buildGraphicsPipeline(self: *Self) c.VkPipeline {
+    const viewport_state: c.VkPipelineViewportStateCreateInfo = .{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1,
+        .scissorCount = 1,
+    };
+
+    const color_blending: c.VkPipelineColorBlendStateCreateInfo = .{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .attachmentCount = 1,
+        .pAttachments = &self.color_blend_attachment,
+        .logicOpEnable = c.VK_FALSE,
+        .logicOp = c.VK_LOGIC_OP_COPY,
+    };
+
+    const vertex_input_info: c.VkPipelineVertexInputStateCreateInfo = .{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    };
+
+    var pipeline_info: c.VkGraphicsPipelineCreateInfo = .{
+        .sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = &self.render_info,
+        .stageCount = @as(u32, @intCast(self.shader_stages.len)),
+        .pStages = &self.shader_stages,
+        .pVertexInputState = &vertex_input_info,
+        .pInputAssemblyState = &self.input_assembly,
+        .pViewportState = &viewport_state,
+        .pRasterizationState = &self.rasterizer,
+        .pMultisampleState = &self.multisample,
+        .pColorBlendState = &color_blending,
+        .pDepthStencilState = &self.depth_stencil,
+        .layout = self.layout,
+    };
+
+    const dynamic_state = [_]c.VkDynamicState{ c.VK_DYNAMIC_STATE_VIEWPORT, c.VK_DYNAMIC_STATE_SCISSOR };
+    const dynamic_state_info: c.VkPipelineDynamicStateCreateInfo = .{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = dynamic_state.len,
+        .pDynamicStates = &dynamic_state[0],
+    };
+
+    pipeline_info.pDynamicState = &dynamic_state_info;
+
+    var pipeline: c.VkPipeline = undefined;
+    const result = c.vkCreateGraphicsPipelines(self.device, null, 1, &pipeline_info, null, &pipeline);
+
+    for (self.shader_stages[0..self.stage_count]) |stage| {
+        c.vkDestroyShaderModule(self.device, stage.module, self.alloc_callbacks);
+    }
+
+    if (result == c.VK_SUCCESS) {
+        return pipeline;
+    } else {
+        return null;
+    }
+}
+
+pub fn buildComputePipeline(self: *Self) c.VkPipeline {
+    const pipeline_info = c.VkComputePipelineCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = self.shader_stages[0],
+        .layout = self.layout,
+    };
+
+    var pipeline: c.VkPipeline = undefined;
+    const result = c.vkCreateComputePipelines(self.device, null, 1, &pipeline_info, null, &pipeline);
+
+    for (self.shader_stages[0..self.stage_count]) |stage| {
+        c.vkDestroyShaderModule(self.device, stage.module, self.alloc_callbacks);
+    }
+
+    if (result == c.VK_SUCCESS) {
+        return pipeline;
+    } else {
+        return null;
+    }
 }

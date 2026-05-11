@@ -4,6 +4,7 @@ const checkVkPanic = @import("errors.zig").checkVkPanic;
 const config = @import("config");
 const DescriptorLayoutBuilder = @import("DescriptorLayoutBuilder.zig");
 const PipelineBuilder = @import("PipelineBuilder.zig");
+const MAX_TEXTURES = @import("BufferManager.zig").MAX_TEXTURES;
 
 const shaders = @import("../shaders.zig");
 
@@ -16,7 +17,8 @@ device: c.VkDevice,
 alloc_callbacks: ?*c.VkAllocationCallbacks,
 
 sharedpipelinelayout: c.VkPipelineLayout,
-descriptorlayout: c.VkDescriptorSetLayout,
+descriptorlayout: c.VkDescriptorSetLayout, // <- Set 0
+bindless_layout: c.VkDescriptorSetLayout, // <- Set 1
 
 pipelines: [shaders.shaders.len]c.VkPipeline,
 
@@ -25,6 +27,9 @@ pub fn init(
     device: c.VkDevice,
     alloc_callbacks: ?*c.VkAllocationCallbacks,
 ) Self {
+    // ========================================================================
+    // 1. SceneData Layout (Set 0)
+    // ========================================================================
     var descriptorlayout: c.VkDescriptorSetLayout = undefined;
     {
         var builder: DescriptorLayoutBuilder = .init();
@@ -43,11 +48,44 @@ pub fn init(
         );
     }
 
-    const descriptorlayouts: [1]c.VkDescriptorSetLayout = .{descriptorlayout};
+    // ========================================================================
+    // 2. Bindless Texture Layout (Set 1)
+    // ========================================================================
+    var bindless_layout: c.VkDescriptorSetLayout = undefined;
+    {
+        var builder: DescriptorLayoutBuilder = .init();
+        defer builder.deinit(allocator);
+
+        // Use the new array function!
+        builder.addBindingArray(allocator, 0, c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_TEXTURES);
+
+        // Bindless requires these specific flags to work
+        const binding_flags = c.VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+            c.VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+
+        var extended_info = c.VkDescriptorSetLayoutBindingFlagsCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+            .pNext = null,
+            .bindingCount = 1,
+            .pBindingFlags = @ptrCast(&binding_flags),
+        };
+
+        // Build it using your existing builder functions
+        bindless_layout = builder.build(
+            device,
+            c.VK_SHADER_STAGE_FRAGMENT_BIT | c.VK_SHADER_STAGE_COMPUTE_BIT,
+            &extended_info, // Passed to pNext
+            c.VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT, // Passed to flags
+        );
+    }
+    // ========================================================================
+    // 3. Shared Pipeline Layout (Set 0 + Set 1)
+    // ========================================================================
+    const descriptorlayouts = [_]c.VkDescriptorSetLayout{ descriptorlayout, bindless_layout };
     const layoutinfo = c.VkPipelineLayoutCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .flags = 0,
-        .setLayoutCount = 1,
+        .setLayoutCount = descriptorlayouts.len, // Now contains 2 layouts
         .pSetLayouts = &descriptorlayouts,
         .pushConstantRangeCount = 0,
     };
@@ -60,6 +98,7 @@ pub fn init(
         .alloc_callbacks = alloc_callbacks,
         .sharedpipelinelayout = sharedpipelinelayout,
         .descriptorlayout = descriptorlayout,
+        .bindless_layout = bindless_layout,
         .pipelines = undefined,
     };
 
@@ -86,6 +125,7 @@ pub fn init(
 }
 
 pub fn deinit(self: *Self) void {
+    c.vkDestroyDescriptorSetLayout(self.device, self.bindless_layout, self.alloc_callbacks);
     c.vkDestroyDescriptorSetLayout(self.device, self.descriptorlayout, self.alloc_callbacks);
     c.vkDestroyPipelineLayout(self.device, self.sharedpipelinelayout, self.alloc_callbacks);
     for (self.pipelines) |pipeline| {
@@ -122,9 +162,9 @@ pub fn buildGraphics(self: *Self, vertex_code: []const u32, fragment_code: []con
     pipelineBuilder.addShader(.vertex, vertex_code);
     pipelineBuilder.addShader(.fragment, fragment_code);
     pipelineBuilder.setInputTopology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-    // pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_FILL);
+    pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_FILL);
     // pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_POINT);
-    pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_LINE);
+    // pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_LINE);
     pipelineBuilder.setCullMode(c.VK_CULL_MODE_NONE, c.VK_FRONT_FACE_CLOCKWISE);
     pipelineBuilder.setMultisampling4();
     pipelineBuilder.disableBlending();
@@ -139,14 +179,35 @@ pub fn buildMeshGraphics(self: *Self, vertex_code: []const u32, fragment_code: [
     pipelineBuilder.addShader(.mesh, vertex_code);
     pipelineBuilder.addShader(.fragment, fragment_code);
     pipelineBuilder.setInputTopology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-    // pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_FILL);
+    pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_FILL);
     // pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_POINT);
-    pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_LINE);
+    // pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_LINE);
     pipelineBuilder.setCullMode(c.VK_CULL_MODE_NONE, c.VK_FRONT_FACE_CLOCKWISE);
     pipelineBuilder.setMultisampling4();
     pipelineBuilder.disableBlending();
     pipelineBuilder.enableDepthtest(true, c.VK_COMPARE_OP_LESS);
     pipelineBuilder.setColorAttachmentFormat(renderformat);
     pipelineBuilder.setDepthFormat(depthformat);
+    return pipelineBuilder.buildGraphicsPipeline();
+}
+
+pub fn buildUI(self: *Self, vertex_code: []const u32, fragment_code: []const u32) c.VkPipeline {
+    var pipelineBuilder: PipelineBuilder = .init(self);
+    pipelineBuilder.addShader(.vertex, vertex_code);
+    pipelineBuilder.addShader(.fragment, fragment_code);
+
+    // CRITICAL FOR UI:
+    pipelineBuilder.setInputTopology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    pipelineBuilder.enableBlendingAlpha(); // Transparent curves!
+    pipelineBuilder.enableDepthtest(false, c.VK_COMPARE_OP_ALWAYS); // Draw on top of everything!
+
+    pipelineBuilder.setInputTopology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_FILL); // Must be FILL
+    pipelineBuilder.setCullMode(c.VK_CULL_MODE_NONE, c.VK_FRONT_FACE_CLOCKWISE);
+    pipelineBuilder.setMultisampling4(); // Assuming your UI target is MSAA
+
+    pipelineBuilder.setColorAttachmentFormat(renderformat);
+    pipelineBuilder.setDepthFormat(depthformat);
+
     return pipelineBuilder.buildGraphicsPipeline();
 }

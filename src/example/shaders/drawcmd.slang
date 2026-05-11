@@ -5,7 +5,7 @@ import common;
 void drawcmdMain(uint3 threadId: SV_DispatchThreadID) {
   uint objIndex = threadId.x;
 
-  if (objIndex >= scene.totalObjects) {
+  if (objIndex >= scene.meshCount) {
     return;
   }
 

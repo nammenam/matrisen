@@ -28,6 +28,21 @@ pub fn addBinding(
     self.bindings.append(allocator, new_binding) catch @panic("Failed to append to bindings");
 }
 
+pub fn addBindingArray(
+    self: *Self,
+    allocator: std.mem.Allocator,
+    binding: u32,
+    descriptor_type: c.VkDescriptorType,
+    count: u32, // <-- Takes a dynamic count
+) void {
+    const new_binding: c.VkDescriptorSetLayoutBinding = .{
+        .binding = binding,
+        .descriptorType = descriptor_type,
+        .descriptorCount = count, // <-- Uses the count
+    };
+    self.bindings.append(allocator, new_binding) catch @panic("Failed to append to bindings");
+}
+
 pub fn clear(self: *Self) void {
     self.bindings.clearAndFree();
 }

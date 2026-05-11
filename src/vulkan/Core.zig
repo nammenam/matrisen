@@ -18,8 +18,7 @@ const Instance = @import("Instance.zig");
 const FrameContext = @import("FrameContext.zig");
 const AsyncContext = @import("AsyncContext.zig");
 const Window = @import("../Window.zig");
-const ImageAllocator = @import("ImageAllocator.zig");
-const BufferManager = @import("BufferManager.zig");
+const ResourceManager = @import("BufferManager.zig");
 const PipelineManager = @import("PipelineManager.zig");
 const DescriptorManager = @import("DescriptorManager.zig");
 
@@ -39,12 +38,11 @@ cpuallocator: std.mem.Allocator,
 gpuallocator: c.VmaAllocator,
 
 /// Managers
-imageallocator: ImageAllocator,
 framecontexts: [multibuffering]FrameContext,
 asynccontext: AsyncContext,
 pipelinemanager: PipelineManager,
 descriptormanager: DescriptorManager,
-buffermanager: BufferManager,
+buffermanager: ResourceManager,
 
 instance: Instance,
 device: Device,
@@ -55,12 +53,12 @@ alloc_callbacks: ?*c.VkAllocationCallbacks,
 surface: c.VkSurfaceKHR,
 swapchain: Swapchain,
 
-// TODO move these into a container for modularity
+// TODO maybe move these into a container for modularity
 drawextent3d: c.VkExtent3D, // for resolution scaling
 drawextent2d: c.VkExtent2D, //for resolution scaling
-drawimage: ImageAllocator.AllocatedImage = undefined,
-renderimage: ImageAllocator.AllocatedImage = undefined,
-depthimage: ImageAllocator.AllocatedImage = undefined,
+drawimage: ResourceManager.AllocatedImage = undefined,
+renderimage: ResourceManager.AllocatedImage = undefined,
+depthimage: ResourceManager.AllocatedImage = undefined,
 
 pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
     var arenaallocator = std.heap.ArenaAllocator.init(allocator);
@@ -92,10 +90,6 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
         .height = drawextent2d.height,
         .depth = 1,
     };
-    var imageallocator: ImageAllocator = .init(device.handle, gpuallocator, alloc_callbacks);
-    const drawimage = imageallocator.createDrawImage(drawextent2d, renderformat);
-    const renderimage = imageallocator.createRenderImage(drawextent2d, renderformat);
-    const depthimage = imageallocator.createDepthImage(drawextent3d, depthformat);
     const pipelinemanager: PipelineManager = .init(allocator, device.handle, alloc_callbacks);
 
     var framecontexts: [multibuffering]FrameContext = undefined;
@@ -108,8 +102,12 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
         );
     }
     const asynccontext: AsyncContext = .init(device, physicaldevice, alloc_callbacks);
-    const buffermanager: BufferManager = .init(device.handle, gpuallocator, alloc_callbacks);
+    var buffermanager: ResourceManager = .init(device.handle, gpuallocator, alloc_callbacks);
     const descriptormanager: DescriptorManager = .init(allocator, device.handle, pipelinemanager);
+
+    const drawimage = buffermanager.createDrawImage(drawextent2d, renderformat);
+    const renderimage = buffermanager.createRenderImage(drawextent2d, renderformat);
+    const depthimage = buffermanager.createDepthImage(drawextent3d, depthformat);
 
     return .{
         .cpuallocator = allocator,
@@ -127,7 +125,6 @@ pub fn init(allocator: std.mem.Allocator, window: *Window) Self {
         .drawextent2d = drawextent2d,
         .drawextent3d = drawextent3d,
         .depthimage = depthimage,
-        .imageallocator = imageallocator,
         .pipelinemanager = pipelinemanager,
         .descriptormanager = descriptormanager,
         .buffermanager = buffermanager,
@@ -141,9 +138,9 @@ pub fn deinit(self: *Self) void {
     defer c.vkDestroyDevice(self.device.handle, self.alloc_callbacks);
     defer c.vmaDestroyAllocator(self.gpuallocator);
     defer self.swapchain.deinit(self.cpuallocator);
-    defer self.imageallocator.deinitImage(self.drawimage);
-    defer self.imageallocator.deinitImage(self.renderimage);
-    defer self.imageallocator.deinitImage(self.depthimage);
+    defer self.buffermanager.deinitImage(self.drawimage);
+    defer self.buffermanager.deinitImage(self.renderimage);
+    defer self.buffermanager.deinitImage(self.depthimage);
     defer for (&self.framecontexts) |*frame| frame.deinit();
     defer self.asynccontext.deinit();
     defer self.pipelinemanager.deinit();
@@ -175,9 +172,9 @@ fn makeGpuAllocator(
 pub fn resize(self: *Self, window: *Window) void {
     errors.checkVkPanic(c.vkDeviceWaitIdle(self.device.handle));
     self.swapchain.deinit(self.cpuallocator);
-    self.imageallocator.deinitImage(self.drawimage);
-    self.imageallocator.deinitImage(self.renderimage);
-    self.imageallocator.deinitImage(self.depthimage);
+    self.buffermanager.deinitImage(self.drawimage);
+    self.buffermanager.deinitImage(self.renderimage);
+    self.buffermanager.deinitImage(self.depthimage);
     var windowextent: c.VkExtent2D = .{};
     window.getSize(&windowextent.width, &windowextent.height);
     self.swapchain = .init(
@@ -190,9 +187,9 @@ pub fn resize(self: *Self, window: *Window) void {
     );
     self.drawextent2d = setRenderScale(self.swapchain.extent, renderscale);
     self.drawextent3d = .{ .width = self.drawextent2d.width, .height = self.drawextent2d.height, .depth = 1 };
-    self.drawimage = self.imageallocator.createDrawImage(self.drawextent2d, renderformat);
-    self.renderimage = self.imageallocator.createRenderImage(self.drawextent2d, renderformat);
-    self.depthimage = self.imageallocator.createDepthImage(self.drawextent3d, depthformat);
+    self.drawimage = self.buffermanager.createDrawImage(self.drawextent2d, renderformat);
+    self.renderimage = self.buffermanager.createRenderImage(self.drawextent2d, renderformat);
+    self.depthimage = self.buffermanager.createDepthImage(self.drawextent3d, depthformat);
 }
 
 fn setRenderScale(inputextent: c.VkExtent2D, scale: f32) c.VkExtent2D {
@@ -267,13 +264,18 @@ fn recordBufferClears(self: *Self, cmd: c.VkCommandBuffer, count_offset: u64) vo
 }
 
 fn recordComputePass(self: *Self, cmd: c.VkCommandBuffer) void {
+    const sets_to_bind = [_]c.VkDescriptorSet{
+        self.descriptormanager.sets[self.currentframe], // Set 0: SceneData
+        self.descriptormanager.bindless_set, // Set 1: Textures
+    };
+
     c.vkCmdBindDescriptorSets(
         cmd,
         c.VK_PIPELINE_BIND_POINT_COMPUTE,
         self.pipelinemanager.sharedpipelinelayout,
-        0,
-        1,
-        &self.descriptormanager.sets[self.currentframe],
+        0, // first set
+        sets_to_bind.len,
+        &sets_to_bind,
         0,
         null,
     );
@@ -316,7 +318,6 @@ fn recordComputePass(self: *Self, cmd: c.VkCommandBuffer) void {
     );
 }
 
-// Passed 'frame' as anytype here to avoid circular imports depending on how your files are laid out
 fn recordGraphicsPass(self: *Self, frame: *FrameContext, cmd: c.VkCommandBuffer, count_offset: u64) void {
     frame.beginGraphicsPass(self);
 
@@ -326,45 +327,55 @@ fn recordGraphicsPass(self: *Self, frame: *FrameContext, cmd: c.VkCommandBuffer,
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.get("vertexMain"));
     }
 
+    const sets_to_bind = [_]c.VkDescriptorSet{
+        self.descriptormanager.sets[self.currentframe], // Set 0: SceneData
+        self.descriptormanager.bindless_set, // Set 1: Textures
+    };
+
     c.vkCmdBindDescriptorSets(
         cmd,
         c.VK_PIPELINE_BIND_POINT_GRAPHICS,
         self.pipelinemanager.sharedpipelinelayout,
-        0,
-        1,
-        &self.descriptormanager.sets[self.currentframe],
+        0, // first set
+        sets_to_bind.len,
+        &sets_to_bind,
         0,
         null,
     );
 
     if (config.meshshading) {
         const indirect_offset = @as(u64, self.currentframe) *
-            BufferManager.MAX_OBJECTS * @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT);
+            ResourceManager.MAX_OBJECTS * @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT);
         self.device.vkCmdDrawMeshTasksIndirectCountEXT.?(
             cmd,
             self.buffermanager.indirectbuffer.buffer,
             indirect_offset,
             self.buffermanager.countbuffer.buffer,
             count_offset,
-            BufferManager.MAX_OBJECTS,
+            ResourceManager.MAX_OBJECTS,
             @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT),
         );
     } else {
         const indirect_offset = @as(u64, self.currentframe) *
-            BufferManager.MAX_OBJECTS * @sizeOf(c.VkDrawIndirectCommand);
+            ResourceManager.MAX_OBJECTS * @sizeOf(c.VkDrawIndirectCommand);
         c.vkCmdDrawIndirectCount(
             cmd,
             self.buffermanager.indirectbuffer.buffer,
             indirect_offset,
             self.buffermanager.countbuffer.buffer,
             count_offset,
-            BufferManager.MAX_OBJECTS,
+            ResourceManager.MAX_OBJECTS,
             @sizeOf(c.VkDrawIndirectCommand),
         );
     }
-    // TODO set up UI
-    // c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.uipipeline);
-    // c.vkCmdDraw(cmd, 6, 0, 0, 0);
+    if (config.meshshading) {
+        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.get("uiMesh"));
+        self.device.vkCmdDrawMeshTasksEXT.?(cmd, 32, 1, 1);
+    } else {
+        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.get("slugVertex"));
+        c.vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
+
     frame.endGraphicsPass(self);
 }
 

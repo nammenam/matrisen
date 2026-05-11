@@ -4,10 +4,6 @@ const Build = std.Build;
 const shaders = @import("src/shaders.zig");
 
 pub fn build(b: *Build) !void {
-    // const alloc = std.heap.smp_allocator;
-    // var threaded = std.Io.Threaded.init(alloc, .{});
-    // const io = threaded.io();
-
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
 

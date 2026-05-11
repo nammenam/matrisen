@@ -13,13 +13,11 @@ public struct VkDrawMeshTasksIndirectCommandEXT {
   public uint groupCountZ;
 }
 
-public struct UIData {
-    public float4x4 modelMatrix;
-    public float4 viewport;
-    // The asterisk (*) makes it a 64-bit BDA pointer!
+public struct UIElement {
+    public float2 position;
+    public float2 size;
     public float4 *curveBuffer;
-    public uint4 *bandBuffer;
-    public uint textureWidth;
+    public uint curveCount;
     public uint _pad;
 };
 
@@ -43,7 +41,6 @@ public struct Mesh {
   public uint materialIndex;
 };
 
-// --- ONE DESCRIPTOR TO RULE THEM ALL ---
 public struct SceneData {
   public float4x4 view;
   public float4x4 proj;
@@ -51,23 +48,25 @@ public struct SceneData {
   public float4 ambient_color;
   public float4 sun_direction;
   public float4 sun_color;
+  public float4 viewport;
   // addresses
   public Transform *transforms;
   public Transform *cpu_transforms;
   public Mesh *meshes;
-  public UIData *uidata;
+  public UIElement *uielements;
 #if USE_MESH_SHADING
   public VkDrawMeshTasksIndirectCommandEXT *indirectCommands;
-  public uint *drawCount;
-  public uint *drawMap;
 #else
   public VkDrawIndirectCommand *indirectCommands;
+#endif  // other
   public uint *drawCount;
   public uint *drawMap;
-#endif  // other
-  public uint totalObjects;
-  public uint _pad;
+  public uint meshCount;
+  public uint uielemCount;
 };
 
 [[vk::binding(0, 0)]]
 public ConstantBuffer<SceneData> scene;
+
+[[vk::binding(0, 1)]]
+public Sampler2D globalTextures[];

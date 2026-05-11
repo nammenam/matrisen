@@ -1,6 +1,14 @@
 pub const spv = "src/example/shaders/compiled/";
 pub const src = "src/example/shaders/";
 
+pub const ShaderDef2 = struct {
+    file: []const u8,
+    comp: ?[]const u8 = null,
+    vert: ?[]const u8 = null,
+    frag: ?[]const u8 = null,
+    mesh: ?[]const u8 = null,
+};
+
 pub const ShaderDef = union(enum) {
     compute: struct { file: []const u8, entry: []const u8 },
     graphics: struct { file: []const u8, entry_vert: []const u8, entry_frag: []const u8 },
@@ -40,5 +48,43 @@ pub const shaders = [_]ShaderDef{
             .entry_vert = "slugVertex",
             .entry_frag = "slugFragment",
         },
+    },
+    .{
+        .mesh_graphics = .{
+            .file = "ui_mesh.slang",
+            .entry_mesh = "uiMesh",
+            .entry_frag = "uiFragment",
+        },
+    },
+};
+
+pub const shaders2 = [_]ShaderDef2{
+    .{
+        .file = "rastermain.slang",
+        .vert = "vertexMain",
+        .frag = "fragmentMain",
+    },
+    .{
+        .file = "rastermain_mesh.slang",
+        .mesh = "meshMain",
+        .frag = "meshFragmentMain",
+    },
+    .{
+        .file = "drawcmd.slang",
+        .comp = "drawcmdMain",
+    },
+    .{
+        .file = "terrain.slang",
+        .comp = "terrainMain",
+    },
+    .{
+        .file = "vectorgfx.slang",
+        .vert = "slugVertex",
+        .frag = "slugFragment",
+    },
+    .{
+        .file = "vectorgfx.slang",
+        .mesh = "slugMesh",
+        .frag = "slugFragment",
     },
 };

@@ -14,6 +14,7 @@ compute_queue: c.VkQueue,
 transfer_queue: c.VkQueue,
 
 vkCmdDrawMeshTasksIndirectCountEXT: c.PFN_vkCmdDrawMeshTasksIndirectCountEXT,
+vkCmdDrawMeshTasksEXT: c.PFN_vkCmdDrawMeshTasksEXT,
 
 pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) !Self {
     const alloc_cb: ?*c.VkAllocationCallbacks = null;
@@ -47,6 +48,9 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) !Self {
         .bufferDeviceAddress = c.VK_TRUE,
         .descriptorIndexing = c.VK_TRUE,
         .drawIndirectCount = c.VK_TRUE,
+        .descriptorBindingSampledImageUpdateAfterBind = c.VK_TRUE,
+        .descriptorBindingPartiallyBound = c.VK_TRUE,
+        .runtimeDescriptorArray = c.VK_TRUE,
     };
 
     // 5. Shader Draw Parameters (Needed for multidraw indirect often)
@@ -63,6 +67,7 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) !Self {
         .features = .{
             .multiDrawIndirect = c.VK_TRUE,
             .fillModeNonSolid = c.VK_TRUE,
+            .samplerAnisotropy = c.VK_TRUE,
         },
     };
 
@@ -127,6 +132,13 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) !Self {
         log.err("Failed to load vkCmdDrawMeshTasksIndirectCountEXT", .{});
         return error.ExtensionFunctionNotLoaded;
     }
+    const procAddr2: c.PFN_vkCmdDrawMeshTasksEXT = @ptrCast(
+        c.vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksEXT"),
+    );
+    if (procAddr == null) {
+        log.err("Failed to load vkCmdDrawMeshTasksEXT", .{});
+        return error.ExtensionFunctionNotLoaded;
+    }
 
     log.info("created logical device", .{});
 
@@ -137,6 +149,7 @@ pub fn init(alloc: std.mem.Allocator, physical_device: PhysicalDevice) !Self {
         .compute_queue = compute_queue,
         .transfer_queue = transfer_queue,
         .vkCmdDrawMeshTasksIndirectCountEXT = procAddr, // Store it in the struct instance
+        .vkCmdDrawMeshTasksEXT = procAddr2, // Store it in the struct instance
     };
 }
 

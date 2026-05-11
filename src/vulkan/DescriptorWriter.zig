@@ -70,6 +70,32 @@ pub fn writeImage(
     self.writes.append(a, write) catch @panic("append failed");
 }
 
+pub fn writeImageArray(
+    self: *@This(),
+    a: std.mem.Allocator,
+    binding: u32,
+    array_element: u32,
+    image: c.VkImageView,
+    sampler: c.VkSampler,
+    layout: c.VkImageLayout,
+    ty: c.VkDescriptorType,
+) void {
+    const info = c.VkDescriptorImageInfo{ .sampler = sampler, .imageView = image, .imageLayout = layout };
+    self.image_infos.append(a, info) catch @panic("append failed");
+
+    const write = c.VkWriteDescriptorSet{
+        .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstBinding = binding,
+        .dstArrayElement = array_element, // <-- Targets the slot
+        .dstSet = null,
+        .descriptorCount = 1,
+        .descriptorType = ty,
+        // Point to the stable memory inside the array list
+        .pImageInfo = &self.image_infos.items[self.image_infos.items.len - 1],
+    };
+    self.writes.append(a, write) catch @panic("append failed");
+}
+
 pub fn clear(self: *@This(), a: std.mem.Allocator) void {
     self.writes.clearAndFree(a);
     self.buffer_infos.clearAndFree(a);

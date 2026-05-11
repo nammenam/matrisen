@@ -3,27 +3,9 @@ import common;
 // Slug Algorithm - Vector Graphics Renderer
 // Original: Copyright 2017, Eric Lengyel (MIT License)
 // ===================================================
+// TODO add a meshshaded variant to replace vertex stage
 
 #define kLogBandTextureWidth 12
-
-// ==========================================
-// SLUG DATA STRUCTURES
-// ==========================================
-
-struct SlugPushConstants {
-    float4x4 mvp;           // Model-view-projection matrix
-    float4   viewport;      // Viewport dimensions in pixels
-};
-
-
-// FIX dont know have push constants not the bindless way
-[[vk::push_constant]]
-SlugPushConstants push;
-
-// Textures for curve and band data
-[[vk::binding(1, 0)]] Texture2D<float4>  curveTexture;
-[[vk::binding(2, 0)]] Texture2D<uint4>   bandTexture;
-[[vk::binding(3, 0)]] SamplerState       slugSampler;
 
 // ==========================================
 // VERTEX INPUT / OUTPUT
@@ -85,13 +67,9 @@ float2 SlugDilate(
     );
 }
 
-// Texel fetch helper - matches HLSL Load semantics
-float4 CurveLoad(int2 coord) {
-    return curveTexture.Load(int3(coord, 0));
-}
-
-uint4 BandLoad(int2 coord) {
-    return bandTexture.Load(int3(coord, 0));
+// Reads directly from VRAM via the 64-bit pointer!
+float4 CurveLoad(UIElement* ui, uint index) {
+    return ui.curveBuffer[index];
 }
 
 uint CalcRootCode(float y1, float y2, float y3) {
@@ -162,7 +140,7 @@ float CalcCoverage(float xcov, float ycov, float xwgt, float ywgt, int flags) {
 
 
 // ==========================================
-// VERTEX SHADER (Fullscreen Triangle Hack)
+// VERTEX SHADER // FIX this is broken
 // ==========================================
 [shader("vertex")]
 SlugVaryings slugVertex(uint vertexId: SV_VertexID) {
@@ -178,10 +156,6 @@ SlugVaryings slugVertex(uint vertexId: SV_VertexID) {
 
     return output;
 }
-
-// ==========================================
-// FRAGMENT SHADER (Hardcoded Curves)
-// ==========================================
 
 // Helper to evaluate a standard Bezier curve (P0, P1, P2) using Slug's root math
 void EvaluateCurve(float2 P0, float2 P1, float2 P2, float2 renderCoord,
@@ -220,21 +194,33 @@ void EvaluateCurve(float2 P0, float2 P1, float2 P2, float2 renderCoord,
     }
 }
 
+// ==========================================
+// FRAGMENT SHADER
+// ==========================================
+
 [shader("fragment")]
 float4 slugFragment(SlugVaryings input) : SV_Target {
+    UIElement* ui = scene.uielements; // Assuming only 1 UI object for now
+
     float xcov = 0.0, xwgt = 0.0;
     float ycov = 0.0, ywgt = 0.0;
 
-    // Let's draw a shape made of 3 Bezier curves!
-    // Curve 1: Top edge (straight-ish line pulling slightly down)
-    EvaluateCurve(float2(200, 200), float2(500, 300), float2(800, 200), input.texcoord, xcov, xwgt, ycov, ywgt);
+    // 2. Fetch the curve count (you could store this in UIData or as a vertex input)
+    uint curveCount = 3;
 
-    // Curve 2: Right swooping belly
-    EvaluateCurve(float2(800, 200), float2(900, 800), float2(500, 900), input.texcoord, xcov, xwgt, ycov, ywgt);
+    // 3. Loop over the curves dynamically via BDA!
+    for(uint i = 0; i < curveCount; i++) {
+        // A standard Slug curve takes up two float4s in memory (P0, P1, P2 packed)
+        float4 curveData1 = CurveLoad(ui, i * 2);
+        float4 curveData2 = CurveLoad(ui, i * 2 + 1);
 
-    // Curve 3: Left swooping belly (closing the loop)
-    EvaluateCurve(float2(500, 900), float2(100, 800), float2(200, 200), input.texcoord, xcov, xwgt, ycov, ywgt);
+        // Unpack your P0, P1, P2 from the float4s (Depends on how you pack them in Zig)
+        float2 P0 = curveData1.xy;
+        float2 P1 = curveData1.zw;
+        float2 P2 = curveData2.xy;
 
+        EvaluateCurve(P0, P1, P2, input.texcoord, xcov, xwgt, ycov, ywgt);
+    }
     // Calculate final coverage using Slug's exact logic
     float coverage = max(
         abs(xcov * xwgt + ycov * ywgt) / max(xwgt + ywgt, 1.0 / 65536.0),
