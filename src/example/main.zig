@@ -47,7 +47,7 @@ pub fn main(init: std.process.Init) !void {
     defer engine.deinit();
 
     try engine.buffermanager.initEngineBuffers(&engine, &engine.descriptormanager);
-    engine.buffermanager.initEmptyMesh(&engine);
-    engine.buffermanager.testUI(&engine);
+    engine.buffermanager.initEmptyMesh(&engine, 256 * 256);
+    // engine.buffermanager.testUI(&engine);
     try loop(io, &engine, &window);
 }

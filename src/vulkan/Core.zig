@@ -223,10 +223,10 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     self.recordBufferClears(cmd, count_offset);
 
     // 2. Compute Culling & Command Generation
-    self.recordComputePass(cmd);
+    // self.recordComputePass(cmd);
 
     // 3. Render Geometry
-    self.recordGraphicsPass(frame, cmd, count_offset);
+    // self.recordGraphicsPass(frame, cmd, count_offset);
 
     // Submit
     frame.endFrame(&self.swapchain);
@@ -288,8 +288,8 @@ fn recordComputePass(self: *Self, cmd: c.VkCommandBuffer) void {
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.get("drawcmdMain"));
 
     // Fixed: Dynamic Dispatch based on exactly how many objects exist
-    // const dispatch_x = (self.buffermanager.object_offset + 63) / 64;
-    const dispatch_x = 1;
+    const dispatch_x = (self.buffermanager.mesh_instance_offset + 63) / 64;
+    // const dispatch_x = 1;
     if (dispatch_x > 0) {
         c.vkCmdDispatch(cmd, dispatch_x, 1, 1);
     }
@@ -372,6 +372,8 @@ fn recordGraphicsPass(self: *Self, frame: *FrameContext, cmd: c.VkCommandBuffer,
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.get("uiMesh"));
         self.device.vkCmdDrawMeshTasksEXT.?(cmd, 32, 1, 1);
     } else {
+        // TODO currently this is manually passsing the ids needed to find the right mesh and ui element
+        // need to find a way to automatically pass the right info maybe draw indirect
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.get("slugVertex"));
         c.vkCmdDraw(cmd, 3, 1, 0, 0);
     }

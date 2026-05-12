@@ -21,7 +21,7 @@ void meshMain(uint3 groupId: SV_GroupID, uint groupIndex: SV_GroupIndex,
               out vertices AssembledVertex outVerts[MAX_VERTS],
               out indices uint3 outIndices[MAX_PRIMS]) {
   uint instanceId = groupId.y;
-  Mesh mesh = scene.meshes[instanceId];
+  Mesh * mesh = scene.meshes[instanceId].meshBuffer;
 
   uint totalTriangles = mesh.indexCount / 3;
   uint globalTriangleIndex = (groupId.x * NUM_THREADS) + groupIndex;

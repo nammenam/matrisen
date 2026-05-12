@@ -9,17 +9,15 @@ void drawcmdMain(uint3 threadId: SV_DispatchThreadID) {
     return;
   }
 
-  uint index_count = scene.meshes[objIndex].indexCount;
-
+  Mesh *mesh_addr = scene.meshes[objIndex].meshBuffer;
+  uint index_count = mesh_addr.indexCount;
   if (index_count == 0) {
     return;
   }
 
   // TODO: Add actual frustum culling here
-
   uint drawIndex;
   InterlockedAdd(scene.drawCount[0], 1, drawIndex);
-
   // --- CONDITIONAL COMPILE BLOCK ---
 #if USE_MESH_SHADING
   scene.drawMap[drawIndex] = objIndex;

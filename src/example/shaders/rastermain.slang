@@ -16,7 +16,8 @@ AssembledVertex vertexMain(uint vertexId: SV_VertexID,
   AssembledVertex out;
 
   // Transform transform = scene.transforms[instanceId];
-  Mesh mesh = scene.meshes[instanceId];
+  MeshInstance instance = scene.meshes[instanceId];
+  Mesh* mesh = instance.meshBuffer;
 
   uint index = mesh.indexBuffer[vertexId];
   Vertex vert = mesh.vertexBuffer[index];

@@ -44,7 +44,7 @@ pub const shaders = [_]ShaderDef{
     },
     .{
         .graphics = .{
-            .file = "vectorgfx.slang",
+            .file = "ui.slang",
             .entry_vert = "slugVertex",
             .entry_frag = "slugFragment",
         },

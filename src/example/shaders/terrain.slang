@@ -7,7 +7,7 @@ import common;
 // --- Value Noise Helpers ---
 
 
-
+// linear shift register with xor taps
 uint pcg(uint v) {
     uint state = v * 747796405u + 2891336453u;
     uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
@@ -118,8 +118,8 @@ void terrainMain(uint3 threadId: SV_DispatchThreadID) {
   v.uv_y = uv.y;
   v.color = float4(col, 1.0);
 
-  scene.meshes[0].vertexBuffer[vertIndex] = v;
-
+  Mesh* mesh = scene.meshes[0].meshBuffer;
+  mesh.vertexBuffer[vertIndex] = v;
   // ---- Write indices (only threads that own a valid quad) ----
   if (x < GRID_SIZE - 1 && y < GRID_SIZE - 1) {
     uint tl = y * GRID_SIZE + x;
@@ -128,11 +128,11 @@ void terrainMain(uint3 threadId: SV_DispatchThreadID) {
     uint br = bl + 1;
 
     uint base = (y * (GRID_SIZE - 1) + x) * 6;
-    scene.meshes[0].indexBuffer[base + 0] = tl;
-    scene.meshes[0].indexBuffer[base + 1] = bl;
-    scene.meshes[0].indexBuffer[base + 2] = tr;
-    scene.meshes[0].indexBuffer[base + 3] = tr;
-    scene.meshes[0].indexBuffer[base + 4] = bl;
-    scene.meshes[0].indexBuffer[base + 5] = br;
+    mesh.indexBuffer[base + 0] = tl;
+    mesh.indexBuffer[base + 1] = bl;
+    mesh.indexBuffer[base + 2] = tr;
+    mesh.indexBuffer[base + 3] = tr;
+    mesh.indexBuffer[base + 4] = bl;
+    mesh.indexBuffer[base + 5] = br;
   }
 }

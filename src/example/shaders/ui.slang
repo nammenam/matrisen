@@ -3,7 +3,6 @@ import common;
 // Slug Algorithm - Vector Graphics Renderer
 // Original: Copyright 2017, Eric Lengyel (MIT License)
 // ===================================================
-// TODO add a meshshaded variant to replace vertex stage
 
 #define kLogBandTextureWidth 12
 
@@ -65,11 +64,6 @@ float2 SlugDilate(
         tex.x + dot(d, jac.xy),
         tex.y + dot(d, jac.zw)
     );
-}
-
-// Reads directly from VRAM via the 64-bit pointer!
-float4 CurveLoad(UIElement* ui, uint index) {
-    return ui.curveBuffer[index];
 }
 
 uint CalcRootCode(float y1, float y2, float y3) {
@@ -151,7 +145,7 @@ SlugVaryings slugVertex(uint vertexId: SV_VertexID) {
     output.position = float4(uvs * 2.0f - 1.0f, 0.0f, 1.0f);
 
     // Scale the UVs to a 0 to 1000 coordinate system for easy curve placement
-    output.texcoord = uvs * 1000.0;
+    output.texcoord = uvs;
     output.color = float4(0.2, 0.8, 1.0, 1.0); // Nice Slug Blue
 
     return output;
@@ -200,26 +194,23 @@ void EvaluateCurve(float2 P0, float2 P1, float2 P2, float2 renderCoord,
 
 [shader("fragment")]
 float4 slugFragment(SlugVaryings input) : SV_Target {
-    UIElement* ui = scene.uielements; // Assuming only 1 UI object for now
+    UIElement* ui = scene.uiobjects.UIBuffer; // Assuming only 1 UI object for now
 
     float xcov = 0.0, xwgt = 0.0;
     float ycov = 0.0, ywgt = 0.0;
 
     // 2. Fetch the curve count (you could store this in UIData or as a vertex input)
-    uint curveCount = 3;
+    uint vertexCount = ui.vertexCount;
 
     // 3. Loop over the curves dynamically via BDA!
-    for(uint i = 0; i < curveCount; i++) {
+    for(uint i = 0; i < vertexCount; i+=3) {
         // A standard Slug curve takes up two float4s in memory (P0, P1, P2 packed)
-        float4 curveData1 = CurveLoad(ui, i * 2);
-        float4 curveData2 = CurveLoad(ui, i * 2 + 1);
+        float3 P0 = ui.vertexBuffer[i].position;
+        float3 P1 = ui.vertexBuffer[i+1].position;
+        float3 P2 = ui.vertexBuffer[i+2].position;
 
-        // Unpack your P0, P1, P2 from the float4s (Depends on how you pack them in Zig)
-        float2 P0 = curveData1.xy;
-        float2 P1 = curveData1.zw;
-        float2 P2 = curveData2.xy;
 
-        EvaluateCurve(P0, P1, P2, input.texcoord, xcov, xwgt, ycov, ywgt);
+        EvaluateCurve(P0.xy, P1.xy, P2.xy, input.texcoord, xcov, xwgt, ycov, ywgt);
     }
     // Calculate final coverage using Slug's exact logic
     float coverage = max(

@@ -69,7 +69,7 @@ pub fn copy(
     blit_info.dstImageLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     blit_info.regionCount = 1;
     blit_info.pRegions = &blit_region;
-    blit_info.filter = c.VK_FILTER_NEAREST;
+    blit_info.filter = c.VK_FILTER_LINEAR;
 
     c.vkCmdBlitImage2(cmd, &blit_info);
 }

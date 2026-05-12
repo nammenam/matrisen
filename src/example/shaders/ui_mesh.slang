@@ -41,9 +41,6 @@ float2 SlugDilate(float4 pos, float4 tex, float4 jac, float4 m0, float4 m1,
   return float2(tex.x + dot(d, jac.xy), tex.y + dot(d, jac.zw));
 }
 
-// Reads directly from VRAM via the 64-bit pointer!
-float4 CurveLoad(UIElement *ui, uint index) { return ui.curveBuffer[index]; }
-
 uint CalcRootCode(float y1, float y2, float y3) {
   uint i1 = asuint(y1) >> 31u;
   uint i2 = asuint(y2) >> 30u;
@@ -144,36 +141,107 @@ void EvaluateCurve(float2 P0, float2 P1, float2 P2, float2 renderCoord,
   }
 }
 
-// ==========================================
-// MESH SHADER
-// ==========================================
+#define UI_TYPE_RECT 0
+#define UI_TYPE_BEZIER_CURVE 1
+
+#define MAX_VERTS 64
+#define MAX_PRIMS 64
+
 [shader("mesh")]
 [outputtopology("triangle")]
-[numthreads(1, 1, 1)]
-void uiMesh(uint workgroupID: SV_GroupID, out indices uint3 prims[2], out vertices UIVaryings verts[4]) {
-    SetMeshOutputCounts(4, 2);
-
+[numthreads(32, 1, 1)]
+void uiMesh(
+    uint workgroupID : SV_GroupID,
+    uint localID     : SV_GroupIndex,
+    out indices uint3 prims[MAX_PRIMS],
+    out vertices UIVaryings verts[MAX_VERTS]
+) {
     if (workgroupID >= scene.uielemCount) return;
 
-    UIElement element = scene.uielements[workgroupID];
+    UIInstance instance = scene.uiobjects[workgroupID];
+    UIElement *ui = instance.UIBuffer;
+    uint type = instance.type;
 
-    float2 minP = (element.position / scene.viewport.xy) * 2.0 - 1.0;
-    float2 maxP = ((element.position + element.size) / scene.viewport.xy) * 2.0 - 1.0;
+    // ==========================================
+    // TYPE 0: RECTANGLE (Defined by 2 Control Points)
+    // ==========================================
+    if (type == UI_TYPE_RECT) {
+        SetMeshOutputCounts(4, 2);
 
-    verts[0].position = float4(minP.x, minP.y, 0.0, 1.0);
-    verts[1].position = float4(maxP.x, minP.y, 0.0, 1.0);
-    verts[2].position = float4(minP.x, maxP.y, 0.0, 1.0);
-    verts[3].position = float4(maxP.x, maxP.y, 0.0, 1.0);
-    verts[0].texcoord = float2(0.0, 0.0);
-    verts[1].texcoord = float2(1.0, 0.0);
-    verts[2].texcoord = float2(0.0, 1.0);
-    verts[3].texcoord = float2(1.0, 1.0);
-    verts[0].elementIndex = workgroupID; // Pass the ID down
-    verts[1].elementIndex = workgroupID;
-    verts[2].elementIndex = workgroupID;
-    verts[3].elementIndex = workgroupID;
-    prims[0] = uint3(0, 1, 2);
-    prims[1] = uint3(2, 1, 3);
+        // Fetch Top-Left (P0) and Bottom-Right (P1) from the control points
+        float2 minP = ui.vertexBuffer[0].position.xy;
+        float2 maxP = ui.vertexBuffer[1].position.xy;
+
+        if (localID < 4) {
+            float2 pos = float2(
+                (localID == 1 || localID == 3) ? maxP.x : minP.x,
+                (localID == 2 || localID == 3) ? maxP.y : minP.y
+            );
+
+            float2 uv = float2(
+                (localID == 1 || localID == 3) ? 1.0 : 0.0,
+                (localID == 2 || localID == 3) ? 1.0 : 0.0
+            );
+
+            // Convert to NDC space
+            float2 ndcPos = (pos / scene.viewport.xy) * 2.0 - 1.0;
+
+            verts[localID].position = float4(ndcPos, 0.0, 1.0);
+            verts[localID].texcoord = uv;
+            verts[localID].elementIndex = workgroupID;
+        }
+
+        if (localID == 0) prims[0] = uint3(0, 1, 2);
+        if (localID == 1) prims[1] = uint3(2, 1, 3);
+    }
+
+    // ==========================================
+    // TYPE 1: BEZIER CURVE (Defined by 3 Control Points)
+    // ==========================================
+    else if (type == UI_TYPE_BEZIER_CURVE) {
+        // Fetch P0, P1, P2 from the exact same buffer!
+        float2 P0 = ui.vertexBuffer[0].position.xy;
+        float2 P1 = ui.vertexBuffer[1].position.xy;
+        float2 P2 = ui.vertexBuffer[2].position.xy;
+
+        uint segments = 10;
+        uint vCount = (segments + 1) * 2;
+        uint pCount = segments * 2;
+
+        SetMeshOutputCounts(vCount, pCount);
+
+        if (localID < vCount) {
+            uint sliceIndex = localID / 2;
+            bool isTop = (localID % 2 == 0);
+            float t = (float)sliceIndex / (float)segments;
+
+            float invT = 1.0 - t;
+            float2 centerPos = (invT * invT * P0) + (2.0 * invT * t * P1) + (t * t * P2);
+
+            float2 tangent = 2.0 * invT * (P1 - P0) + 2.0 * t * (P2 - P1);
+            float2 normal = normalize(float2(-tangent.y, tangent.x));
+
+            float thickness = 5.0; // TODO: pull this from instance packed bits later!
+            float2 finalPos = centerPos + (normal * thickness * (isTop ? 1.0 : -1.0));
+
+            float2 ndcPos = (finalPos / scene.viewport.xy) * 2.0 - 1.0;
+
+            verts[localID].position = float4(ndcPos, 0.0, 1.0);
+            verts[localID].texcoord = float2(t, isTop ? 1.0 : 0.0);
+            verts[localID].elementIndex = workgroupID;
+        }
+
+        if (localID < pCount) {
+            uint quadIndex = localID / 2;
+            uint vBase = quadIndex * 2;
+
+            if (localID % 2 == 0) {
+                prims[localID] = uint3(vBase, vBase + 1, vBase + 2);
+            } else {
+                prims[localID] = uint3(vBase + 2, vBase + 1, vBase + 3);
+            }
+        }
+    }
 }
 
 // ==========================================
@@ -184,24 +252,20 @@ float4 uiFragment(UIVaryings in) : SV_Target {
     float xcov = 0.0, xwgt = 0.0;
     float ycov = 0.0, ywgt = 0.0;
 
-    // return float4(1.0, 0.0, 0.0, 1.0);
-    // 1. Fetch the exact UI element using the ID
-    UIElement element = scene.uielements[in.elementIndex];
+    // 1. Fetch the exact UI instance and element
+    UIInstance instance = scene.uiobjects[in.elementIndex];
+    UIElement *ui = instance.UIBuffer;
 
-    // 2. Grab the 64-bit BDA pointer for the curves
-    float4 *curves = element.curveBuffer;
+    // 2. Loop through the vertices (using your current Vertex struct)
+    for (uint i = 0; i < ui.vertexCount; i += 3) {
+        // Ensure we don't read past the buffer if vertexCount isn't a multiple of 3
+        if (i + 2 >= ui.vertexCount) break;
 
-    // 3. Pointer arithmetic loop!
-    for (uint i = 0; i < element.curveCount; i++) {
-        // Read directly using the pointer offset
-        float4 curveData1 = curves[i * 2];
-        float4 curveData2 = curves[i * 2 + 1];
+        float2 P0 = ui.vertexBuffer[i].position.xy;
+        float2 P1 = ui.vertexBuffer[i + 1].position.xy;
+        float2 P2 = ui.vertexBuffer[i + 2].position.xy;
 
-        float2 P0 = curveData1.xy;
-        float2 P1 = curveData1.zw;
-        float2 P2 = curveData2.xy;
-
-        EvaluateCurve(P0, P1, P2, in.texcoord * 1000.0, xcov, xwgt, ycov, ywgt);
+        EvaluateCurve(P0, P1, P2, in.texcoord, xcov, xwgt, ycov, ywgt);
     }
 
     float coverage = max(
@@ -212,5 +276,6 @@ float4 uiFragment(UIVaryings in) : SV_Target {
 
     if (coverage <= 0.0) discard;
 
+    // TODO: Pull actual color from the Vertex or Instance instead of white!
     return float4(1.0, 1.0, 1.0, coverage);
 }
