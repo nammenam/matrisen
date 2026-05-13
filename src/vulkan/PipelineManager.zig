@@ -1,3 +1,5 @@
+// TODO rework pipeline management, use a lot of comptime
+
 const std = @import("std");
 const c = @import("c");
 const checkVkPanic = @import("errors.zig").checkVkPanic;
@@ -118,6 +120,11 @@ pub fn init(
                 const frag = comptime embedSpv("../../" ++ shaders.spv ++ s.entry_frag ++ ".spv");
                 break :blk self.buildMeshGraphics(mesh, frag);
             },
+            .ui => |s| blk: {
+                const mesh = comptime embedSpv("../../" ++ shaders.spv ++ s.entry_mesh ++ ".spv");
+                const frag = comptime embedSpv("../../" ++ shaders.spv ++ s.entry_frag ++ ".spv");
+                break :blk self.buildUI(mesh, frag);
+            },
         };
     }
 
@@ -145,6 +152,7 @@ pub fn get(self: *Self, comptime name: []const u8) c.VkPipeline {
             .compute => |s| comptime std.mem.eql(u8, s.entry, name),
             .graphics => |s| comptime std.mem.eql(u8, s.entry_vert, name),
             .mesh_graphics => |s| comptime std.mem.eql(u8, s.entry_mesh, name),
+            .ui => |s| comptime std.mem.eql(u8, s.entry_mesh, name),
         };
         if (matches) return self.pipelines[i];
     }
@@ -193,7 +201,7 @@ pub fn buildMeshGraphics(self: *Self, vertex_code: []const u32, fragment_code: [
 
 pub fn buildUI(self: *Self, vertex_code: []const u32, fragment_code: []const u32) c.VkPipeline {
     var pipelineBuilder: PipelineBuilder = .init(self);
-    pipelineBuilder.addShader(.vertex, vertex_code);
+    pipelineBuilder.addShader(.mesh, vertex_code);
     pipelineBuilder.addShader(.fragment, fragment_code);
 
     // CRITICAL FOR UI:
@@ -202,7 +210,8 @@ pub fn buildUI(self: *Self, vertex_code: []const u32, fragment_code: []const u32
     pipelineBuilder.enableDepthtest(false, c.VK_COMPARE_OP_ALWAYS); // Draw on top of everything!
 
     pipelineBuilder.setInputTopology(c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-    pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_FILL); // Must be FILL
+    pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_FILL);
+    // pipelineBuilder.setPolygonMode(c.VK_POLYGON_MODE_LINE);
     pipelineBuilder.setCullMode(c.VK_CULL_MODE_NONE, c.VK_FRONT_FACE_CLOCKWISE);
     pipelineBuilder.setMultisampling4(); // Assuming your UI target is MSAA
 

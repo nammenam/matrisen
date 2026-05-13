@@ -24,11 +24,11 @@ pub fn loop(io: std.Io, engine: *Core, window: *m.Window) !void {
     camera.distance = 250;
 
     while (!window.state.quit) {
-        const dt = @as(f32, @floatFromInt(t.untilNow(io, .awake).toNanoseconds())) / 1_000_000_000;
+        // const dt = @as(f32, @floatFromInt(t.untilNow(io, .awake).toNanoseconds())) / 1_000_000_000;
         t = std.Io.Clock.awake.now(io);
-        std.debug.print("delta time is {0:2} s      ", .{dt});
+        // std.debug.print("delta time is {0:2} s      ", .{dt});
         time = @as(f32, @floatFromInt(t_start.untilNow(io, .awake).toNanoseconds())) / 1_000_000_000;
-        std.debug.print("time is  {0:2} s", .{time});
+        // std.debug.print("time is  {0:2} s", .{time});
         std.debug.print("                                                                  \r", .{});
         window.processInput();
         // camera.firstPerson(window);
@@ -48,6 +48,6 @@ pub fn main(init: std.process.Init) !void {
 
     try engine.buffermanager.initEngineBuffers(&engine, &engine.descriptormanager);
     engine.buffermanager.initEmptyMesh(&engine, 256 * 256);
-    // engine.buffermanager.testUI(&engine);
+    engine.buffermanager.testUI(&engine);
     try loop(io, &engine, &window);
 }

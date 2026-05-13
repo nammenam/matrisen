@@ -1,3 +1,29 @@
+// TODO this is verry brittle and very prone to bugs need to compartmentalize put memory sensitive
+// code into functions write correct once
+//
+// TODO clean up make more user firendly spit into multiple files, hard to keep track of variables
+// that span multiple functions and lifetime (the self. variables)
+// the buffers and bumps can be put into a struct that has the buffer, addr, and count
+// only store the count and convert to bytes when uploading only
+
+// TODO Need to find out if gpu needs acces to the bump if it is going to write and produce objects
+// eg. create a mesh with size unkown to cpu, (this probably needs gpu - cpu sync?)
+// or alternativly have two separate buffers, one that gpu writes to and bumps and one that
+// cpu writes to and bumps, the gpu can read both, we also need to create compote shaders
+// that generate persistent meshes and save to vram not only meshshaders that dont save to vram
+
+// TODO We have two indirections one lookup for the instance
+// and one lookup for mesh/uibuffer is it better to have flatter structure with one lookup?
+// can we maybe store indices out of bounds if we pack data in the right order? or is that
+// too complicated, anyway the structs need to be tweaked for optimal architecture
+// in general the system needs to be fast, low memory footprint and not to complex
+
+// TODO find the right data format for UI, how many branches do we want in the shader
+// (how many ui primitives ) do we want 3D ui or only 2D, maybe use both and optimize
+// again we have to find out how many indierections we want and if we want to store
+// indices out of bounds and be clever about ordering, instead of type fields shuld we
+// create many buffers that implicitly decide the type
+
 const std = @import("std");
 const linalg = @import("../linalg.zig");
 const errors = @import("errors.zig");
@@ -14,18 +40,22 @@ const Vec3 = linalg.Vec3(f32);
 const Vec4 = linalg.Vec4(f32);
 const Mat4x4 = linalg.Mat4x4(f32);
 
-// Limits for the engine
-// TODO have separate limits for types of objects
+// TODO merge into the new allocated buffer struct
 pub const MAX_GEOMETRY_BYTES = 64 * 1024 * 1024; // 64 MB for verts/indices
 pub const MAX_TEXTURES = 4096; // 4 KB for images
 pub const MAX_DYNAMIC_UI = 4096; // 4 KB for images
 pub const MAX_OBJECTS = 4096;
 pub const CPU_TRANSFORMS = 100;
 
+// TODO use updated struct
 pub const AllocatedBuffer = struct {
     buffer: c.VkBuffer,
     allocation: c.VmaAllocation,
     info: c.VmaAllocationInfo,
+    // bdaddr: u64,
+    // count: u32,
+    // element_size: comptime_int,
+    // capacity: comptime_int,
 };
 
 // TODO invesigate optimized memory layout and redundant fields
@@ -33,7 +63,12 @@ pub const AllocatedImage = struct {
     image: c.VkImage,
     allocation: c.VmaAllocation,
     view: c.VkImageView,
+    // info: c.VmaAllocationInfo,
+    // bdaddr: u64,
     bindless_index: u32,
+    // count: u32,
+    // element_size: comptime_int,
+    // capacity: comptime_int,
 };
 
 // ========================================================================
@@ -207,27 +242,27 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     // ====================================================================
 
     // Giant Geometry Buffers
-    self.vertexbuffer = self.create(
+    self.vertexbuffer = self.createBuffer(
         MAX_GEOMETRY_BYTES,
         c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
             c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
-    self.indexbuffer = self.create(
+    self.indexbuffer = self.createBuffer(
         MAX_GEOMETRY_BYTES,
         c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
             c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
     // list of mesh objects
-    self.meshbuffer = self.create(
+    self.meshbuffer = self.createBuffer(
         @sizeOf(Mesh) * MAX_OBJECTS,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
             c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY, // TODO maybe make cpu visible
     );
     // list of ui objects
-    self.uibuffer = self.create(
+    self.uibuffer = self.createBuffer(
         @sizeOf(UIElement) * MAX_OBJECTS,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
             c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -238,49 +273,51 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     // Dynamic buffers (double buffered) GPU Only
     // ====================================================================
 
+    // TODO find out what needs to be double bufferd
+
     // list of mesh instances
-    self.meshinstancebuffer = self.create(
+    self.meshinstancebuffer = self.createBuffer(
         @sizeOf(MeshInstance) * MAX_OBJECTS * mb,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
             c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY, // TODO maybe make cpu visible
     );
     // list of ui instances
-    self.uiinstancebuffer = self.create(
+    self.uiinstancebuffer = self.createBuffer(
         @sizeOf(UIInstance) * MAX_OBJECTS * mb,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
             c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY, // TODO maybe make cpu visible
     );
     // 3. Compute Buffers
-    self.transformbuffer = self.create(
+    self.transformbuffer = self.createBuffer(
         @sizeOf(Transform) * MAX_OBJECTS * mb,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
     if (config.meshshading) {
-        self.indirectbuffer = self.create(
+        self.indirectbuffer = self.createBuffer(
             @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT) * MAX_OBJECTS * mb,
             c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
             c.VMA_MEMORY_USAGE_GPU_ONLY,
         );
     } else {
-        self.indirectbuffer = self.create(
+        self.indirectbuffer = self.createBuffer(
             @sizeOf(c.VkDrawIndirectCommand) * MAX_OBJECTS * mb,
             c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                 c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
             c.VMA_MEMORY_USAGE_GPU_ONLY,
         );
     }
-    self.countbuffer = self.create(
+    self.countbuffer = self.createBuffer(
         @sizeOf(u32) * mb,
         c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
             c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
 
-    self.drawmapbuffer = self.create(
+    self.drawmapbuffer = self.createBuffer(
         @sizeOf(u32) * MAX_OBJECTS * mb,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
@@ -291,13 +328,13 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     // ====================================================================
 
     // INFO can put other data than vertex in here as long as it makes sense to do so
-    self.dynamicvertexbuffer = self.create(
+    self.dynamicvertexbuffer = self.createBuffer(
         @sizeOf(Vertex) * MAX_OBJECTS * mb,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_CPU_TO_GPU,
     );
 
-    self.cpuside_transformbuffer = self.create(
+    self.cpuside_transformbuffer = self.createBuffer(
         @sizeOf(Transform) * CPU_TRANSFORMS * mb,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_CPU_TO_GPU,
@@ -305,9 +342,9 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
 
     // 4. Uniform Buffers (Already Double buffered)
     // If you are wondering where the write for the other set (bindless texture is)
-    // The other set gets written in uploadTexture
+    // The other set gets written in uploadTexture //TODO is that right way to do it
     for (&self.scenebuffers, 0..) |*buf, i| {
-        buf.* = self.create(
+        buf.* = self.createBuffer(
             @sizeOf(SceneData),
             c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             c.VMA_MEMORY_USAGE_CPU_TO_GPU,
@@ -355,55 +392,6 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     // push empty mesh to prevent crash
     self.initEmptyMesh(core, 0);
     self.initEmptyUI(core, 0);
-}
-
-pub fn uploadMesh(
-    self: *Self,
-    core: *Core,
-    vertices: []const Vertex,
-    indices: []const u32,
-) void {
-    const v_size = vertices.len * @sizeOf(Vertex);
-    const i_size = indices.len * @sizeOf(u32);
-
-    if (self.vertex_byte_offset + v_size > MAX_GEOMETRY_BYTES or
-        self.index_byte_offset + i_size > MAX_GEOMETRY_BYTES)
-    {
-        @panic("Giant Geometry Buffers are full!");
-    }
-
-    // Cast slices to raw bytes for the upload function
-    const v_bytes = std.mem.sliceAsBytes(vertices);
-    const i_bytes = std.mem.sliceAsBytes(indices);
-
-    // Upload via Staging Buffer
-    self.upload(&core.asynccontext, v_bytes, self.vertexbuffer, self.vertex_byte_offset);
-    self.upload(&core.asynccontext, i_bytes, self.indexbuffer, self.index_byte_offset);
-
-    // Get Base Device Addresses
-    const base_v_addr = self.vertexaddr;
-    const base_i_addr = self.indexaddr;
-
-    // Create the bindless DrawData referencing the exact offsets
-    const mesh = Mesh{
-        .vertexBuffer = base_v_addr + self.vertex_byte_offset,
-        .indexBuffer = base_i_addr + self.index_byte_offset,
-        .indexCount = @as(u32, @intCast(indices.len)),
-        .pad = 0,
-    };
-
-    // Bump the allocators
-    self.vertex_byte_offset += v_size;
-    self.index_byte_offset += i_size;
-
-    // push to the objects list
-    self.upload(
-        &core.asynccontext,
-        std.mem.asBytes(&mesh),
-        self.meshbuffer,
-        self.mesh_byte_offset,
-    );
-    self.mesh_byte_offset += @sizeOf(Mesh);
 }
 
 // Writes the SceneData with dynamic offsets based on the frame
@@ -457,7 +445,7 @@ pub fn updateScene(
     }
 }
 
-pub fn create(
+pub fn createBuffer(
     self: *Self,
     alloc_size: usize,
     usage: c.VkBufferUsageFlags,
@@ -496,7 +484,7 @@ pub fn upload(
     const size = data_slice.len;
 
     // Create staging buffer (CPU visible)
-    const staging_buffer = self.create(
+    const staging_buffer = self.createBuffer(
         size,
         c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         c.VMA_MEMORY_USAGE_CPU_ONLY,
@@ -616,96 +604,6 @@ pub fn createView(device: c.VkDevice, image: c.VkImage, format: c.VkFormat, mipl
         c.vkCreateImageView(device, &view_info, null, &image_view),
     ) catch @panic("failed to make image view");
     return image_view;
-}
-
-pub fn uploadTexture(
-    self: *Self,
-    core: *Core,
-    descriptormanager: *DescriptorManager,
-    data: []const u8,
-    extent: c.VkExtent3D,
-    format: c.VkFormat,
-    mipmapped: bool,
-) AllocatedImage {
-    if (self.texture_count >= MAX_TEXTURES) {
-        @panic("Exceeded maximum bindless textures!");
-    }
-
-    // 1. Create Staging Buffer
-    const staging = self.createBuffer(
-        data.len,
-        c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        c.VMA_MEMORY_USAGE_CPU_TO_GPU,
-    );
-    defer self.destroyBuffer(staging);
-
-    // 2. Copy Data to Staging
-    const mapped_data = @as([*]u8, @ptrCast(staging.info.pMappedData.?));
-    @memcpy(mapped_data[0..data.len], data);
-
-    // 3. Create GPU Image
-    var new_image = self.createRawImage(
-        extent,
-        format,
-        c.VK_IMAGE_USAGE_SAMPLED_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-        mipmapped,
-    );
-
-    // 4. Record and Submit Transfer Commands
-    core.asynccontext.submitBegin();
-    const cmd = core.asynccontext.commandbuffer;
-
-    imageop.transition(
-        cmd,
-        new_image.image,
-        c.VK_IMAGE_LAYOUT_UNDEFINED,
-        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-    );
-
-    const image_copy_region: c.VkBufferImageCopy = .{
-        .bufferOffset = 0,
-        .bufferRowLength = 0,
-        .bufferImageHeight = 0,
-        .imageSubresource = .{
-            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
-            .mipLevel = 0,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-        .imageExtent = extent,
-    };
-
-    c.vkCmdCopyBufferToImage(
-        cmd,
-        staging.buffer,
-        new_image.image,
-        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        1,
-        &image_copy_region,
-    );
-
-    imageop.transition(
-        cmd,
-        new_image.image,
-        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-    );
-    core.asynccontext.submitEnd();
-
-    // 5. Create View & Assign Bindless Index
-    new_image.view = self.createImageView(new_image.image, format, if (mipmapped) 0 else 1);
-    new_image.bindless_index = self.texture_count;
-    self.texture_count += 1;
-
-    // 6. Push to Descriptor Manager
-    descriptormanager.writeBindlessTexture(
-        self.device,
-        new_image.view,
-        self.global_sampler,
-        new_image.bindless_index,
-    );
-
-    return new_image;
 }
 
 // TODO move to separate file
@@ -906,7 +804,6 @@ pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) void {
         .pad = 0,
     };
 
-    // 4. Upload Mesh to the Mesh Buffer
     self.upload(
         &core.asynccontext,
         std.mem.asBytes(&mesh),
@@ -914,20 +811,21 @@ pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) void {
         current_mesh_offset,
     );
 
-    // 5. Build the Instance pointing to the PRE-BUMP mesh offset
     const instance = MeshInstance{
         .meshBuffer = self.meshbufferaddr + current_mesh_offset,
         .transformIndex = 0, // No transform for now
         .materialIndex = 0, // Material lives here!
     };
 
-    // 6. Upload Instance to the Instance Buffer
-    self.upload(
-        &core.asynccontext,
-        std.mem.asBytes(&instance),
-        self.meshinstancebuffer,
-        self.mesh_instance_offset * @sizeOf(MeshInstance),
-    );
+    for (0..Core.multibuffering) |i| {
+        const frame_base_offset = i * MAX_OBJECTS * @sizeOf(MeshInstance);
+        self.upload(
+            &core.asynccontext,
+            std.mem.asBytes(&instance),
+            self.meshinstancebuffer,
+            frame_base_offset + self.mesh_instance_offset * @sizeOf(MeshInstance),
+        );
+    }
     if (size != 0) {
         self.mesh_instance_offset += 1;
     }
@@ -943,7 +841,9 @@ pub fn initEmptyUI(self: *Self, core: *Core, size: usize) void {
 
     // 2. Bump the allocators for the NEXT allocations
     self.vertex_byte_offset += @intCast(v_size);
-    self.ui_byte_offset += @sizeOf(UIElement);
+    if (size != 0) {
+        self.ui_byte_offset += @sizeOf(UIElement);
+    }
 
     // 3. Build the ui using the PRE-BUMP offsets
     const mesh = UIElement{
@@ -967,29 +867,31 @@ pub fn initEmptyUI(self: *Self, core: *Core, size: usize) void {
         .type = 0,
     };
 
-    // 6. Upload Instance to the Instance Buffer
-    self.upload(
-        &core.asynccontext,
-        std.mem.asBytes(&instance),
-        self.meshinstancebuffer,
-        self.ui_instance_offset * @sizeOf(UIInstance),
-    );
-    self.ui_instance_offset += 1;
+    for (0..Core.multibuffering) |i| {
+        const frame_base_offset = i * MAX_OBJECTS * @sizeOf(UIInstance);
+        self.upload(
+            &core.asynccontext,
+            std.mem.asBytes(&instance),
+            self.uiinstancebuffer,
+            frame_base_offset + self.ui_instance_offset * @sizeOf(UIInstance),
+        );
+    }
+    if (size != 0) {
+        self.ui_instance_offset += 1;
+    }
 }
-
-// TODO move these into enum or something
-const UI_TYPE_RECT = 0;
-const UI_TYPE_BEZIER_CURVE = 1;
 
 // TODO move into separate file
 pub fn testUI(self: *Self, core: *Core) void {
     // 1. Pack our 3 controlpoints into an array
     const mock_curves = [_]Vertex{
         .{ .position = .{ .x = 100, .y = 100, .z = 0 } },
-        .{ .position = .{ .x = 500, .y = 600, .z = 0 } },
-        .{ .position = .{ .x = 300, .y = 400, .z = 0 } },
+        .{ .position = .{ .x = 200, .y = 600, .z = 0 } },
+        .{ .position = .{ .x = 400, .y = 100, .z = 0 } },
     };
 
+    // const UI_TYPE_RECT = 0;
+    const UI_TYPE_BEZIER_CURVE = 1;
     const curve_bytes = std.mem.sliceAsBytes(&mock_curves);
 
     // 2. Safety check for your giant buffer
@@ -1003,10 +905,12 @@ pub fn testUI(self: *Self, core: *Core) void {
     // 1. Capture current offsets (PRE-BUMP)
     const current_v_offset = self.vertex_byte_offset;
     const current_ui_offset = self.ui_byte_offset;
-
     // 2. Bump the allocators for the NEXT allocations
     self.vertex_byte_offset += v_size;
     self.ui_byte_offset += @sizeOf(UIElement);
+
+    // Upload via Staging Buffer
+    self.upload(&core.asynccontext, curve_bytes, self.vertexbuffer, current_v_offset);
 
     // 3. Build the ui using the PRE-BUMP offsets
     const mesh = UIElement{
@@ -1015,12 +919,7 @@ pub fn testUI(self: *Self, core: *Core) void {
         .pad = 0,
     };
 
-    self.upload(
-        &core.asynccontext,
-        std.mem.asBytes(&mesh),
-        self.uibuffer, // The pool of geometry structs
-        current_ui_offset,
-    );
+    self.upload(&core.asynccontext, std.mem.asBytes(&mesh), self.uibuffer, current_ui_offset);
 
     // 5. Build the Instance pointing to the PRE-BUMP mesh offset
     const instance = UIInstance{
@@ -1029,12 +928,14 @@ pub fn testUI(self: *Self, core: *Core) void {
         .type = UI_TYPE_BEZIER_CURVE,
     };
 
-    // 6. Upload Instance to the Instance Buffer
-    self.upload(
-        &core.asynccontext,
-        std.mem.asBytes(&instance),
-        self.meshinstancebuffer,
-        self.ui_instance_offset * @sizeOf(UIInstance),
-    );
+    for (0..Core.multibuffering) |i| {
+        const frame_base_offset = i * MAX_OBJECTS * @sizeOf(UIInstance);
+        self.upload(
+            &core.asynccontext,
+            std.mem.asBytes(&instance),
+            self.uiinstancebuffer,
+            frame_base_offset + self.ui_instance_offset * @sizeOf(UIInstance),
+        );
+    }
     self.ui_instance_offset += 1;
 }

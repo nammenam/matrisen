@@ -1,8 +1,5 @@
-//! Copyright (C) 2025 B.W. brage.wis@gmail.com
-//! This file is part of MATRISEN.
-//! MATRISEN is free software: you can redistribute it and/or modify it under
-//! the terms of the GNU General Public License (GPL3)
-//! see the LICENSE file or <https://www.gnu.org/licenses/> for more details
+// TODO the code is ugly, store intermidiates in variables for
+// better readablilty, it does nothing to performace
 
 const std = @import("std");
 const log = std.log.scoped(.core);
@@ -223,10 +220,10 @@ pub fn nextFrame(self: *Self, window: *Window) void {
     self.recordBufferClears(cmd, count_offset);
 
     // 2. Compute Culling & Command Generation
-    // self.recordComputePass(cmd);
+    self.recordComputePass(cmd);
 
     // 3. Render Geometry
-    // self.recordGraphicsPass(frame, cmd, count_offset);
+    self.recordGraphicsPass(frame, cmd, count_offset);
 
     // Submit
     frame.endFrame(&self.swapchain);
@@ -370,7 +367,7 @@ fn recordGraphicsPass(self: *Self, frame: *FrameContext, cmd: c.VkCommandBuffer,
     }
     if (config.meshshading) {
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.get("uiMesh"));
-        self.device.vkCmdDrawMeshTasksEXT.?(cmd, 32, 1, 1);
+        self.device.vkCmdDrawMeshTasksEXT.?(cmd, 1, 1, 1);
     } else {
         // TODO currently this is manually passsing the ids needed to find the right mesh and ui element
         // need to find a way to automatically pass the right info maybe draw indirect

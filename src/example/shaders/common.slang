@@ -42,7 +42,7 @@ public struct BoundingBox {
 
 public struct UIElement {
   public Vertex *vertexBuffer; // TODO use UIVertex instead
-  public uint vertexCount; // number of vertices
+  public uint vertexCount;     // number of vertices
   public uint pad;
 };
 
@@ -56,12 +56,12 @@ public struct Mesh {
 public struct UIInstance {
   public UIElement *UIBuffer; // two levels of lookup, first ui then vertex
   public uint transformIndex;
-// Packing the state!
+  // Packing the state!
   // Bits 0-7:   Type (0=Rect, 1=Circle, 2=Line, 3=Bezier)
   // Bits 8-15:  Flags (1=Filled, 2=Hovered, 4=Disabled)
   // Bits 16-31: Material/Style Index (Points to a buffer with colors/thickness)
   public uint type;
-  // public float thickness; // For lines/borders can be separate buffer for reuse
+  // public float thickness; // For lines can be separate buffer for reuse
 };
 
 public struct MeshInstance {
@@ -77,8 +77,7 @@ public struct SceneData {
   public float4 sun_color;
   public float4 viewport;
   // addresses
-  public Transform
-      *transforms; // written by gpu (can be written by cpu at init)
+  public Transform *transforms;     // written by gpu (can be written by cpu)
   public Transform *cpu_transforms; // written by cpu only
   public MeshInstance *meshes;      // written by cpu (and gpu?)
   public UIInstance *uiobjects;     // written by cpu (and gpu?)
@@ -96,8 +95,6 @@ public struct SceneData {
   public uint pad0;
   public uint pad1;
 };
-
-static const uint NUM_THREADS = 32;
 
 [[vk::binding(0, 0)]]
 public ConstantBuffer<SceneData> scene;

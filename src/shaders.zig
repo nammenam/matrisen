@@ -1,7 +1,15 @@
 pub const spv = "src/example/shaders/compiled/";
 pub const src = "src/example/shaders/";
 
+pub const ShaderType = enum {
+    ui,
+    raster,
+    raster_mesh,
+    compute,
+};
+
 pub const ShaderDef2 = struct {
+    name: []const u8, // name of pipeline
     file: []const u8,
     comp: ?[]const u8 = null,
     vert: ?[]const u8 = null,
@@ -13,6 +21,7 @@ pub const ShaderDef = union(enum) {
     compute: struct { file: []const u8, entry: []const u8 },
     graphics: struct { file: []const u8, entry_vert: []const u8, entry_frag: []const u8 },
     mesh_graphics: struct { file: []const u8, entry_mesh: []const u8, entry_frag: []const u8 },
+    ui: struct { file: []const u8, entry_mesh: []const u8, entry_frag: []const u8 },
 };
 
 pub const shaders = [_]ShaderDef{
@@ -50,7 +59,7 @@ pub const shaders = [_]ShaderDef{
         },
     },
     .{
-        .mesh_graphics = .{
+        .ui = .{
             .file = "ui_mesh.slang",
             .entry_mesh = "uiMesh",
             .entry_frag = "uiFragment",

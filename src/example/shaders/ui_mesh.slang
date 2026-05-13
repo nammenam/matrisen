@@ -141,6 +141,50 @@ void EvaluateCurve(float2 P0, float2 P1, float2 P2, float2 renderCoord,
   }
 }
 
+// Exact distance to a Quadratic Bezier curve
+float sdBezier(float2 pos, float2 A, float2 B, float2 C) {
+    float2 a = B - A;
+    float2 b = A - 2.0 * B + C;
+    float2 c = a * 2.0;
+    float2 d = A - pos;
+
+    float kk = 1.0 / max(dot(b,b), 0.0001); // Prevent divide by zero
+    float kx = kk * dot(a,b);
+    float ky = kk * (2.0 * dot(a,a) + dot(d,b)) / 3.0;
+    float kz = kk * dot(d,a);
+
+    float res = 0.0;
+    float p = ky - kx * kx;
+    float p3 = p * p * p;
+    float q = kx * (2.0 * kx * kx - 3.0 * ky) + kz;
+    float h = q * q + 4.0 * p3;
+
+    if(h >= 0.0) {
+        h = sqrt(h);
+        float2 x = (float2(h, -h) - q) / 2.0;
+        float2 uv = sign(x) * pow(abs(x), float2(1.0/3.0, 1.0/3.0));
+        float t = uv.x + uv.y - kx;
+        t = clamp(t, 0.0, 1.0);
+        float2 qos = d + (c + b * t) * t;
+        res = length(qos);
+    } else {
+        float z = sqrt(-p);
+        float v = acos(q / (p * z * 2.0)) / 3.0;
+        float m = cos(v);
+        float n = sin(v) * 1.732050808;
+        float3 t = float3(m + m, -n - m, n - m) * z - kx;
+        t = clamp(t, 0.0, 1.0);
+        float2 qos = d + (c + b * t.x) * t.x;
+        float dis = dot(qos,qos);
+        res = dis;
+        qos = d + (c + b * t.y) * t.y;
+        dis = dot(qos,qos);
+        res = min(res,dis);
+        res = sqrt(res);
+    }
+    return res;
+}
+
 #define UI_TYPE_RECT 0
 #define UI_TYPE_BEZIER_CURVE 1
 
@@ -150,63 +194,28 @@ void EvaluateCurve(float2 P0, float2 P1, float2 P2, float2 renderCoord,
 [shader("mesh")]
 [outputtopology("triangle")]
 [numthreads(32, 1, 1)]
-void uiMesh(
-    uint workgroupID : SV_GroupID,
-    uint localID     : SV_GroupIndex,
-    out indices uint3 prims[MAX_PRIMS],
-    out vertices UIVaryings verts[MAX_VERTS]
-) {
+void uiMesh(uint workgroupID : SV_GroupID, uint localID : SV_GroupIndex,
+            out indices uint3 prims[MAX_PRIMS],
+            out vertices UIVaryings verts[MAX_VERTS]) {
+
     if (workgroupID >= scene.uielemCount) return;
 
     UIInstance instance = scene.uiobjects[workgroupID];
     UIElement *ui = instance.UIBuffer;
     uint type = instance.type;
 
-    // ==========================================
-    // TYPE 0: RECTANGLE (Defined by 2 Control Points)
-    // ==========================================
-    if (type == UI_TYPE_RECT) {
-        SetMeshOutputCounts(4, 2);
-
-        // Fetch Top-Left (P0) and Bottom-Right (P1) from the control points
-        float2 minP = ui.vertexBuffer[0].position.xy;
-        float2 maxP = ui.vertexBuffer[1].position.xy;
-
-        if (localID < 4) {
-            float2 pos = float2(
-                (localID == 1 || localID == 3) ? maxP.x : minP.x,
-                (localID == 2 || localID == 3) ? maxP.y : minP.y
-            );
-
-            float2 uv = float2(
-                (localID == 1 || localID == 3) ? 1.0 : 0.0,
-                (localID == 2 || localID == 3) ? 1.0 : 0.0
-            );
-
-            // Convert to NDC space
-            float2 ndcPos = (pos / scene.viewport.xy) * 2.0 - 1.0;
-
-            verts[localID].position = float4(ndcPos, 0.0, 1.0);
-            verts[localID].texcoord = uv;
-            verts[localID].elementIndex = workgroupID;
-        }
-
-        if (localID == 0) prims[0] = uint3(0, 1, 2);
-        if (localID == 1) prims[1] = uint3(2, 1, 3);
-    }
-
-    // ==========================================
-    // TYPE 1: BEZIER CURVE (Defined by 3 Control Points)
-    // ==========================================
-    else if (type == UI_TYPE_BEZIER_CURVE) {
-        // Fetch P0, P1, P2 from the exact same buffer!
+    if (type == UI_TYPE_BEZIER_CURVE) {
         float2 P0 = ui.vertexBuffer[0].position.xy;
         float2 P1 = ui.vertexBuffer[1].position.xy;
         float2 P2 = ui.vertexBuffer[2].position.xy;
 
-        uint segments = 10;
-        uint vCount = (segments + 1) * 2;
-        uint pCount = segments * 2;
+        float strokeWidth = 3.0;
+        float dist = length(P2 - P0) + length(P1 - P0);
+        uint segments = clamp(uint(dist / 15.0), 2, 14);
+        // uint segments = 12;
+        float thickness = strokeWidth + 5.0;
+        uint vCount = (segments + 1) * 2; // 22 vertices
+        uint pCount = segments * 2;       // 20 primitives
 
         SetMeshOutputCounts(vCount, pCount);
 
@@ -218,12 +227,17 @@ void uiMesh(
             float invT = 1.0 - t;
             float2 centerPos = (invT * invT * P0) + (2.0 * invT * t * P1) + (t * t * P2);
 
+            // Calculate Tangent and Normal
             float2 tangent = 2.0 * invT * (P1 - P0) + 2.0 * t * (P2 - P1);
-            float2 normal = normalize(float2(-tangent.y, tangent.x));
 
-            float thickness = 5.0; // TODO: pull this from instance packed bits later!
+            // Safe normalize to prevent NaN if control points overlap
+            float len = length(tangent);
+            float2 normal = len > 0.0001 ? float2(-tangent.y, tangent.x) / len : float2(0.0, 1.0);
+
+            // MASSIVE THICKNESS FOR TESTING (50 pixels in both directions)
             float2 finalPos = centerPos + (normal * thickness * (isTop ? 1.0 : -1.0));
 
+            // Convert to Screen NDC space
             float2 ndcPos = (finalPos / scene.viewport.xy) * 2.0 - 1.0;
 
             verts[localID].position = float4(ndcPos, 0.0, 1.0);
@@ -231,6 +245,7 @@ void uiMesh(
             verts[localID].elementIndex = workgroupID;
         }
 
+        // Build the Quad Strip Winding Order
         if (localID < pCount) {
             uint quadIndex = localID / 2;
             uint vBase = quadIndex * 2;
@@ -244,38 +259,73 @@ void uiMesh(
     }
 }
 
+
 // ==========================================
-// FRAGMENT SHADER
+// FRAGMENT SHADER STROKE
 // ==========================================
 [shader("fragment")]
 float4 uiFragment(UIVaryings in) : SV_Target {
-    float xcov = 0.0, xwgt = 0.0;
-    float ycov = 0.0, ywgt = 0.0;
-
-    // 1. Fetch the exact UI instance and element
     UIInstance instance = scene.uiobjects[in.elementIndex];
     UIElement *ui = instance.UIBuffer;
 
-    // 2. Loop through the vertices (using your current Vertex struct)
+    // Default to discard unless we find a curve we are close to
+    float minDistance = 99999.0;
+
     for (uint i = 0; i < ui.vertexCount; i += 3) {
-        // Ensure we don't read past the buffer if vertexCount isn't a multiple of 3
         if (i + 2 >= ui.vertexCount) break;
 
         float2 P0 = ui.vertexBuffer[i].position.xy;
         float2 P1 = ui.vertexBuffer[i + 1].position.xy;
         float2 P2 = ui.vertexBuffer[i + 2].position.xy;
 
-        EvaluateCurve(P0, P1, P2, in.texcoord, xcov, xwgt, ycov, ywgt);
+        float d = sdBezier(in.position.xy, P0, P1, P2);
+        minDistance = min(minDistance, d);
     }
 
-    float coverage = max(
-        abs(xcov * xwgt + ycov * ywgt) / max(xwgt + ywgt, 1.0 / 65536.0),
-        min(abs(xcov), abs(ycov))
-    );
-    coverage = saturate(coverage);
+    float strokeWidth = 4.0; // Desired pixel thickness of the line
+    float edgeRadius = strokeWidth / 2.0;
 
+    // Calculate anti-aliasing (1 pixel fade at the exact edge)
+    float coverage = saturate(edgeRadius - minDistance + 0.5);
+
+    // If the pixel is further away than the stroke width, discard!
     if (coverage <= 0.0) discard;
 
-    // TODO: Pull actual color from the Vertex or Instance instead of white!
     return float4(1.0, 1.0, 1.0, coverage);
 }
+// ==========================================
+// FRAGMENT SHADER FILL
+// ==========================================
+// [shader("fragment")]
+// float4 uiFragment(UIVaryings in) : SV_Target {
+//     float xcov = 0.0, xwgt = 0.0;
+//     float ycov = 0.0, ywgt = 0.0;
+
+//     // 1. Fetch the exact UI instance and element
+//     UIInstance instance = scene.uiobjects[in.elementIndex];
+//     UIElement *ui = instance.UIBuffer;
+
+//     // 2. Loop through the vertices
+//     for (uint i = 0; i < ui.vertexCount; i += 3) {
+//         if (i + 2 >= ui.vertexCount) break;
+
+//         float2 P0 = ui.vertexBuffer[i].position.xy;
+//         float2 P1 = ui.vertexBuffer[i + 1].position.xy;
+//         float2 P2 = ui.vertexBuffer[i + 2].position.xy;
+
+//         // FIXED: Passing in.position.xy (Pixel Coordinates) instead of UVs
+//         EvaluateCurve(P0, P1, P2, in.position.xy, xcov, xwgt, ycov, ywgt);
+//     }
+
+//     float coverage = max(
+//         abs(xcov * xwgt + ycov * ywgt) / max(xwgt + ywgt, 1.0 / 65536.0),
+//         min(abs(xcov), abs(ycov))
+//     );
+//     coverage = saturate(coverage);
+
+//     // If the pixel is outside the math curve, drop it.
+//     if (coverage <= 0.0) discard;
+
+//     // Output solid white, but use coverage for the anti-aliased alpha edge!
+//     return float4(1.0, 1.0, 1.0, coverage);
+// }

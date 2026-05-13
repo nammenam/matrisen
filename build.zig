@@ -69,6 +69,10 @@ pub fn build(b: *Build) !void {
                 compileSlang(b, shaders_step, s.file, s.entry_mesh, "mesh", enable_meshshading);
                 compileSlang(b, shaders_step, s.file, s.entry_frag, "fragment", enable_meshshading);
             },
+            .ui => |s| {
+                compileSlang(b, shaders_step, s.file, s.entry_mesh, "mesh", enable_meshshading);
+                compileSlang(b, shaders_step, s.file, s.entry_frag, "fragment", enable_meshshading);
+            },
         }
     }
 

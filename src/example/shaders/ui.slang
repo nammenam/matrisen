@@ -134,8 +134,10 @@ float CalcCoverage(float xcov, float ycov, float xwgt, float ywgt, int flags) {
 
 
 // ==========================================
-// VERTEX SHADER // FIX this is broken
+// VERTEX SHADER
 // ==========================================
+// // TODO FIX this is broken. Make compute shader that creates meshes for this
+// the compute shader is also usefull for the ui meshshaded varient if we want to cahce the mesh
 [shader("vertex")]
 SlugVaryings slugVertex(uint vertexId: SV_VertexID) {
     SlugVaryings output;
