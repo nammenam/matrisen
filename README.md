@@ -11,3 +11,15 @@ useful graphics in useful formats for plotting, illustrating and animation tasks
 `  - src`
 
 `  - docs`
+
+
+
+  ┌────────────────┬──────────────────────────────────────────┬────────────────────────────────┐
+  │                │ Static (Rarely changes)                  │ Dynamic (Changes every frame)  │                ├────────────────┼──────────────────────────────────────────┼────────────────────────────────┤
+  │ CPU Controlled │ GLTF Meshes,                             │ UI Vertices, Camera Transforms,│
+  │                │ Textures uploaded from disk.             │ Player Input state.            │
+  ├────────────────┼──────────────────────────────────────────┼────────────────────────────────┤
+  │ GPU Controlled │ Procedural Terrain,                      │ GPU Culling output             │
+  │                │ Baked Lightmaps,                         │ (Visible instances),           │
+  │                │ Raytracing BVHs.                         │ Particle Simulations.          │
+  └────────────────┴──────────────────────────────────────────┴────────────────────────────────┘

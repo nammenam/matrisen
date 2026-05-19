@@ -33,6 +33,7 @@ const Core = @import("Core.zig");
 const DescriptorManager = @import("DescriptorManager.zig");
 const AsyncContext = @import("AsyncContext.zig");
 const imageop = @import("imageop.zig");
+const Arena = @import("Arena.zig").Arena;
 
 const Quat = linalg.Quat(f32);
 const Vec2 = linalg.Vec2(f32);
@@ -152,6 +153,12 @@ alloc_callbacks: ?*c.VkAllocationCallbacks,
 
 global_sampler: c.VkSampler = undefined,
 
+// --- The 4 Core Arenas ---
+static_cpu_arena: Arena = undefined,
+dynamic_cpu_arena: Arena = undefined,
+static_gpu_arena: Arena = undefined,
+dynamic_gpu_arena: Arena = undefined,
+
 // gpu large buffers
 vertexbuffer: AllocatedBuffer = undefined,
 dynamicvertexbuffer: AllocatedBuffer = undefined,
@@ -231,11 +238,52 @@ pub fn destroyBuffers(self: *Self) void {
     self.destroy(self.uiinstancebuffer);
     self.destroy(self.dynamicvertexbuffer);
     c.vkDestroySampler(self.device, self.global_sampler, self.alloc_callbacks);
+
+    if (self.static_cpu_arena.buffer.buffer != null) self.destroy(self.static_cpu_arena.buffer);
+    if (self.dynamic_cpu_arena.buffer.buffer != null) self.destroy(self.dynamic_cpu_arena.buffer);
+    if (self.static_gpu_arena.buffer.buffer != null) self.destroy(self.static_gpu_arena.buffer);
+    if (self.dynamic_gpu_arena.buffer.buffer != null) self.destroy(self.dynamic_gpu_arena.buffer);
 }
 
 // Initializes the memory arenas with MULTI-BUFFERING sizing
 pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *DescriptorManager) !void {
     const mb = Core.multibuffering;
+
+    // ====================================================================
+    // The 4 Core Arenas (Architecture Upgrade)
+    // ====================================================================
+
+    // 1. Static CPU Arena (CPU to GPU, Write once)
+    const static_cpu_buf = self.createBuffer(
+        128 * 1024 * 1024, // 128 MB
+        c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        c.VMA_MEMORY_USAGE_CPU_ONLY,
+    );
+    self.static_cpu_arena = Arena.init(static_cpu_buf, 0, 128 * 1024 * 1024);
+
+    // 2. Dynamic CPU Arena (CPU to GPU, Ring buffered or persistently mapped)
+    const dynamic_cpu_buf = self.createBuffer(
+        64 * 1024 * 1024, // 64 MB
+        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        c.VMA_MEMORY_USAGE_CPU_TO_GPU,
+    );
+    self.dynamic_cpu_arena = Arena.init(dynamic_cpu_buf, self.getBufferAddress(dynamic_cpu_buf), 64 * 1024 * 1024);
+
+    // 3. Static GPU Arena (GPU Only, procedural static meshes, loaded once)
+    const static_gpu_buf = self.createBuffer(
+        256 * 1024 * 1024, // 256 MB
+        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        c.VMA_MEMORY_USAGE_GPU_ONLY,
+    );
+    self.static_gpu_arena = Arena.init(static_gpu_buf, self.getBufferAddress(static_gpu_buf), 256 * 1024 * 1024);
+
+    // 4. Dynamic GPU Arena (GPU Only, cleared every frame for compute output)
+    const dynamic_gpu_buf = self.createBuffer(
+        128 * 1024 * 1024, // 128 MB
+        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        c.VMA_MEMORY_USAGE_GPU_ONLY,
+    );
+    self.dynamic_gpu_arena = Arena.init(dynamic_gpu_buf, self.getBufferAddress(dynamic_gpu_buf), 128 * 1024 * 1024);
 
     // ====================================================================
     // Static buffers (change rarely) mega buffers GPU Only
