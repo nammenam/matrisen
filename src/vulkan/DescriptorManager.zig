@@ -6,7 +6,7 @@ const DescriptorAllocator = @import("DescriptorAllocator.zig");
 const Device = @import("Device.zig");
 const PipelineManager = @import("PipelineManager.zig");
 const DescriptorWriter = @import("DescriptorWriter.zig");
-const ResourceManager = @import("BufferManager.zig");
+const ResourceManager = @import("ResourceManager.zig");
 
 const Self = @This();
 

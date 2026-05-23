@@ -1,3 +1,5 @@
+# MATRISEN
+
 The goal of this project is to provide a graphics playground, it is meant to be a tool for
 visualising ideas and to generate beautiful but also simple graphics. Target applications are
 visualising mathemathics, physics or engineering problems, though it is not limited to only these
@@ -8,14 +10,15 @@ useful graphics in useful formats for plotting, illustrating and animation tasks
 
 ## Contents / Navigtaion Guide
 
-`  - src`
+- docs
+- src
 
-`  - docs`
 
 
 
   ┌────────────────┬──────────────────────────────────────────┬────────────────────────────────┐
-  │                │ Static (Rarely changes)                  │ Dynamic (Changes every frame)  │                ├────────────────┼──────────────────────────────────────────┼────────────────────────────────┤
+  │                │ Static (Rarely changes)                  │ Dynamic (Changes every frame)  │
+  ├────────────────┼──────────────────────────────────────────┼────────────────────────────────┤
   │ CPU Controlled │ GLTF Meshes,                             │ UI Vertices, Camera Transforms,│
   │                │ Textures uploaded from disk.             │ Player Input state.            │
   ├────────────────┼──────────────────────────────────────────┼────────────────────────────────┤

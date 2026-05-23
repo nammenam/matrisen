@@ -48,15 +48,10 @@ pub const MAX_DYNAMIC_UI = 4096; // 4 KB for images
 pub const MAX_OBJECTS = 4096;
 pub const CPU_TRANSFORMS = 100;
 
-// TODO use updated struct
 pub const AllocatedBuffer = struct {
     buffer: c.VkBuffer,
     allocation: c.VmaAllocation,
     info: c.VmaAllocationInfo,
-    // bdaddr: u64,
-    // count: u32,
-    // element_size: comptime_int,
-    // capacity: comptime_int,
 };
 
 // TODO invesigate optimized memory layout and redundant fields
@@ -65,11 +60,7 @@ pub const AllocatedImage = struct {
     allocation: c.VmaAllocation,
     view: c.VkImageView,
     // info: c.VmaAllocationInfo,
-    // bdaddr: u64,
     bindless_index: u32,
-    // count: u32,
-    // element_size: comptime_int,
-    // capacity: comptime_int,
 };
 
 // ========================================================================
@@ -120,6 +111,17 @@ pub const UIInstance = extern struct {
     type: u32,
 };
 
+pub const GPUCounters = extern struct {
+    drawCount: u32,
+    vertexOffset: u32,
+    indexOffset: u32,
+    meshOffset: u32,
+    uiVertexOffset: u32,
+    uiElementOffset: u32,
+    pad0: u32 = 0,
+    pad1: u32 = 0,
+};
+
 pub const SceneData = extern struct {
     viewproj: Mat4x4,
     ambient_color: Vec4,
@@ -132,7 +134,7 @@ pub const SceneData = extern struct {
     meshes: u64, // *MeshInstance
     uiobjects: u64, // *UIInstance
     indirectCommands: u64, // *indirecbuffer
-    drawCount: u64, // *drawcountbuffer / *uint
+    counters: u64, // *GPUCounters
     drawMap: u64, // *uint
     // counts
     meshcount: u32,
@@ -158,49 +160,25 @@ static_cpu_arena: Arena = undefined,
 dynamic_cpu_arena: Arena = undefined,
 static_gpu_arena: Arena = undefined,
 dynamic_gpu_arena: Arena = undefined,
+readback_arena: Arena = undefined,
 
-// gpu large buffers
-vertexbuffer: AllocatedBuffer = undefined,
-dynamicvertexbuffer: AllocatedBuffer = undefined,
-indexbuffer: AllocatedBuffer = undefined,
-transformbuffer: AllocatedBuffer = undefined,
-cpuside_transformbuffer: AllocatedBuffer = undefined,
-meshbuffer: AllocatedBuffer = undefined,
-meshinstancebuffer: AllocatedBuffer = undefined,
-uiinstancebuffer: AllocatedBuffer = undefined,
-indirectbuffer: AllocatedBuffer = undefined,
-countbuffer: AllocatedBuffer = undefined,
-drawmapbuffer: AllocatedBuffer = undefined,
-uibuffer: AllocatedBuffer = undefined,
-// TODO add the dynamic ui buffer here
+// gpu large arenas
+vertex_arena: Arena = undefined,
+dynamicvertex_arena: Arena = undefined,
+index_arena: Arena = undefined,
+transform_arena: Arena = undefined,
+cputransform_arena: Arena = undefined,
+mesh_arena: Arena = undefined,
+meshinstance_arena: Arena = undefined,
+uiinstance_arena: Arena = undefined,
+indirect_arena: Arena = undefined,
+count_arena: Arena = undefined,
+drawmap_arena: Arena = undefined,
+ui_arena: Arena = undefined,
 
 // Uniforms and binded buffers
 scenebuffers: [Core.multibuffering]AllocatedBuffer = @splat(undefined),
 
-// buffer addresses pushed to the gpu via uniform
-transformbufferaddr: u64 = undefined,
-cpuside_transformbufferaddr: u64 = undefined,
-meshbufferaddr: u64 = undefined,
-meshinstanceaddr: u64 = undefined,
-indirectbufferaddr: u64 = undefined,
-countbufferaddr: u64 = undefined,
-drawmapbufferaddr: u64 = undefined,
-uibufferaddr: u64 = undefined,
-uiinstanceaddr: u64 = undefined,
-vertexaddr: u64 = undefined,
-indexaddr: u64 = undefined,
-dynamicvertexaddr: u64 = undefined,
-
-// Bump Allocator Trackers
-vertex_byte_offset: u32 = 0, // in bytes need to do ptr math
-index_byte_offset: u32 = 0, // in bytes need to do ptr math
-mesh_byte_offset: u32 = 0, // in bytes need to do ptr math
-ui_byte_offset: u32 = 0, // in bytes need to do ptr math
-dynamicvertex_byte_offset: u32 = 0,
-mesh_instance_offset: u32 = 0, // not in bytes, dont need to do ptr math
-ui_instance_offset: u32 = 0, // not in bytes, dont need to do ptr math
-cputransform_offset: u32 = 0,
-transform_offset: u32 = 0,
 texture_count: u32 = 0,
 
 pub fn init(
@@ -225,18 +203,6 @@ pub fn destroy(self: *Self, buffer: AllocatedBuffer) void {
 
 pub fn destroyBuffers(self: *Self) void {
     for (self.scenebuffers) |buf| self.destroy(buf);
-    self.destroy(self.vertexbuffer);
-    self.destroy(self.indexbuffer);
-    self.destroy(self.transformbuffer);
-    self.destroy(self.meshbuffer);
-    self.destroy(self.meshinstancebuffer);
-    self.destroy(self.cpuside_transformbuffer);
-    self.destroy(self.indirectbuffer);
-    self.destroy(self.countbuffer);
-    self.destroy(self.drawmapbuffer);
-    self.destroy(self.uibuffer);
-    self.destroy(self.uiinstancebuffer);
-    self.destroy(self.dynamicvertexbuffer);
     c.vkDestroySampler(self.device, self.global_sampler, self.alloc_callbacks);
 
     if (self.static_cpu_arena.buffer.buffer != null) self.destroy(self.static_cpu_arena.buffer);
@@ -259,7 +225,7 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         c.VMA_MEMORY_USAGE_CPU_ONLY,
     );
-    self.static_cpu_arena = Arena.init(static_cpu_buf, 0, 128 * 1024 * 1024);
+    self.static_cpu_arena = Arena.init(static_cpu_buf, 0, 0, 128 * 1024 * 1024);
 
     // 2. Dynamic CPU Arena (CPU to GPU, Ring buffered or persistently mapped)
     const dynamic_cpu_buf = self.createBuffer(
@@ -267,7 +233,7 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_CPU_TO_GPU,
     );
-    self.dynamic_cpu_arena = Arena.init(dynamic_cpu_buf, self.getBufferAddress(dynamic_cpu_buf), 64 * 1024 * 1024);
+    self.dynamic_cpu_arena = Arena.init(dynamic_cpu_buf, 0, self.getBufferAddress(dynamic_cpu_buf), 64 * 1024 * 1024);
 
     // 3. Static GPU Arena (GPU Only, procedural static meshes, loaded once)
     const static_gpu_buf = self.createBuffer(
@@ -275,118 +241,60 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
-    self.static_gpu_arena = Arena.init(static_gpu_buf, self.getBufferAddress(static_gpu_buf), 256 * 1024 * 1024);
+    self.static_gpu_arena = Arena.init(static_gpu_buf, 0, self.getBufferAddress(static_gpu_buf), 256 * 1024 * 1024);
 
     // 4. Dynamic GPU Arena (GPU Only, cleared every frame for compute output)
     const dynamic_gpu_buf = self.createBuffer(
         128 * 1024 * 1024, // 128 MB
-        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
-    self.dynamic_gpu_arena = Arena.init(dynamic_gpu_buf, self.getBufferAddress(dynamic_gpu_buf), 128 * 1024 * 1024);
+    self.dynamic_gpu_arena = Arena.init(dynamic_gpu_buf, 0, self.getBufferAddress(dynamic_gpu_buf), 128 * 1024 * 1024);
+
+    // 5. Readback Arena (GPU to CPU, for retrieving data)
+    const readback_buf = self.createBuffer(
+        16 * 1024 * 1024, // 16 MB
+        c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        c.VMA_MEMORY_USAGE_GPU_TO_CPU,
+    );
+    self.readback_arena = Arena.init(readback_buf, 0, 0, 16 * 1024 * 1024);
 
     // ====================================================================
-    // Static buffers (change rarely) mega buffers GPU Only
+    // Static arenas (change rarely) mega buffers GPU Only
     // ====================================================================
 
     // Giant Geometry Buffers
-    self.vertexbuffer = self.createBuffer(
-        MAX_GEOMETRY_BYTES,
-        c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-            c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        c.VMA_MEMORY_USAGE_GPU_ONLY,
-    );
-    self.indexbuffer = self.createBuffer(
-        MAX_GEOMETRY_BYTES,
-        c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-            c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        c.VMA_MEMORY_USAGE_GPU_ONLY,
-    );
+    self.vertex_arena = try self.static_gpu_arena.subAllocateArena(MAX_GEOMETRY_BYTES);
+    self.index_arena = try self.static_gpu_arena.subAllocateArena(MAX_GEOMETRY_BYTES);
     // list of mesh objects
-    self.meshbuffer = self.createBuffer(
-        @sizeOf(Mesh) * MAX_OBJECTS,
-        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-            c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        c.VMA_MEMORY_USAGE_GPU_ONLY, // TODO maybe make cpu visible
-    );
+    self.mesh_arena = try self.static_gpu_arena.subAllocateArena(@sizeOf(Mesh) * MAX_OBJECTS);
     // list of ui objects
-    self.uibuffer = self.createBuffer(
-        @sizeOf(UIElement) * MAX_OBJECTS,
-        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-            c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        c.VMA_MEMORY_USAGE_GPU_ONLY, // TODO maybe make cpu visible
-    );
+    self.ui_arena = try self.static_gpu_arena.subAllocateArena(@sizeOf(UIElement) * MAX_OBJECTS);
 
     // ====================================================================
-    // Dynamic buffers (double buffered) GPU Only
+    // Dynamic arenas (double buffered) GPU Only
     // ====================================================================
-
-    // TODO find out what needs to be double bufferd
 
     // list of mesh instances
-    self.meshinstancebuffer = self.createBuffer(
-        @sizeOf(MeshInstance) * MAX_OBJECTS * mb,
-        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-            c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        c.VMA_MEMORY_USAGE_GPU_ONLY, // TODO maybe make cpu visible
-    );
+    self.meshinstance_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(MeshInstance) * MAX_OBJECTS * mb);
     // list of ui instances
-    self.uiinstancebuffer = self.createBuffer(
-        @sizeOf(UIInstance) * MAX_OBJECTS * mb,
-        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-            c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        c.VMA_MEMORY_USAGE_GPU_ONLY, // TODO maybe make cpu visible
-    );
+    self.uiinstance_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(UIInstance) * MAX_OBJECTS * mb);
     // 3. Compute Buffers
-    self.transformbuffer = self.createBuffer(
-        @sizeOf(Transform) * MAX_OBJECTS * mb,
-        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        c.VMA_MEMORY_USAGE_GPU_ONLY,
-    );
+    self.transform_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(Transform) * MAX_OBJECTS * mb);
     if (config.meshshading) {
-        self.indirectbuffer = self.createBuffer(
-            @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT) * MAX_OBJECTS * mb,
-            c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-            c.VMA_MEMORY_USAGE_GPU_ONLY,
-        );
+        self.indirect_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(c.VkDrawMeshTasksIndirectCommandEXT) * MAX_OBJECTS * mb);
     } else {
-        self.indirectbuffer = self.createBuffer(
-            @sizeOf(c.VkDrawIndirectCommand) * MAX_OBJECTS * mb,
-            c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-            c.VMA_MEMORY_USAGE_GPU_ONLY,
-        );
+        self.indirect_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(c.VkDrawIndirectCommand) * MAX_OBJECTS * mb);
     }
-    self.countbuffer = self.createBuffer(
-        @sizeOf(u32) * mb,
-        c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-            c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        c.VMA_MEMORY_USAGE_GPU_ONLY,
-    );
-
-    self.drawmapbuffer = self.createBuffer(
-        @sizeOf(u32) * MAX_OBJECTS * mb,
-        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        c.VMA_MEMORY_USAGE_GPU_ONLY,
-    );
+    self.count_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(GPUCounters) * mb);
+    self.drawmap_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(u32) * MAX_OBJECTS * mb);
 
     // ====================================================================
-    // Dynamic buffers Host visible (CPU visible)
+    // Dynamic arenas Host visible (CPU visible)
     // ====================================================================
 
-    // INFO can put other data than vertex in here as long as it makes sense to do so
-    self.dynamicvertexbuffer = self.createBuffer(
-        @sizeOf(Vertex) * MAX_OBJECTS * mb,
-        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        c.VMA_MEMORY_USAGE_CPU_TO_GPU,
-    );
-
-    self.cpuside_transformbuffer = self.createBuffer(
-        @sizeOf(Transform) * CPU_TRANSFORMS * mb,
-        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        c.VMA_MEMORY_USAGE_CPU_TO_GPU,
-    );
+    self.dynamicvertex_arena = try self.dynamic_cpu_arena.subAllocateArena(@sizeOf(Vertex) * MAX_OBJECTS * mb);
+    self.cputransform_arena = try self.dynamic_cpu_arena.subAllocateArena(@sizeOf(Transform) * CPU_TRANSFORMS * mb);
 
     // 4. Uniform Buffers (Already Double buffered)
     // If you are wondering where the write for the other set (bindless texture is)
@@ -424,22 +332,16 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         &self.global_sampler,
     ));
 
-    self.transformbufferaddr = self.getBufferAddress(self.transformbuffer);
-    self.cpuside_transformbufferaddr = self.getBufferAddress(self.cpuside_transformbuffer);
-    self.meshbufferaddr = self.getBufferAddress(self.meshbuffer);
-    self.indirectbufferaddr = self.getBufferAddress(self.indirectbuffer);
-    self.countbufferaddr = self.getBufferAddress(self.countbuffer);
-    self.drawmapbufferaddr = self.getBufferAddress(self.drawmapbuffer);
-    self.uibufferaddr = self.getBufferAddress(self.uibuffer);
-    self.vertexaddr = self.getBufferAddress(self.vertexbuffer);
-    self.indexaddr = self.getBufferAddress(self.indexbuffer);
-    self.uiinstanceaddr = self.getBufferAddress(self.uiinstancebuffer);
-    self.meshinstanceaddr = self.getBufferAddress(self.meshinstancebuffer);
-    self.dynamicvertexaddr = self.getBufferAddress(self.dynamicvertexbuffer);
+    self.initEmptyMesh(core, 0) catch @panic("Failed to init empty mesh");
+    self.initEmptyUI(core, 0) catch @panic("Failed to init empty UI");
+}
 
-    // push empty mesh to prevent crash
-    self.initEmptyMesh(core, 0);
-    self.initEmptyUI(core, 0);
+pub fn getMeshInstanceCount(self: *const Self) u32 {
+    return self.meshinstance_arena.allocator.offset / @sizeOf(MeshInstance) / Core.multibuffering;
+}
+
+pub fn getUIInstanceCount(self: *const Self) u32 {
+    return self.uiinstance_arena.allocator.offset / @sizeOf(UIInstance) / Core.multibuffering;
 }
 
 // Writes the SceneData with dynamic offsets based on the frame
@@ -463,13 +365,13 @@ pub fn updateScene(
     ptr.viewport = Vec4.new(2000, 1200, 0, 0);
 
     // Calculate BDA base addresses
-    const b_trans = self.transformbufferaddr;
-    const b_meshes = self.meshinstanceaddr;
-    const b_indir = self.indirectbufferaddr;
-    const b_count = self.countbufferaddr;
-    const b_cpu_trans = self.cpuside_transformbufferaddr;
-    const b_drawmap = self.drawmapbufferaddr;
-    const b_ui = self.uiinstanceaddr;
+    const b_trans = self.transform_arena.device_address;
+    const b_meshes = self.meshinstance_arena.device_address;
+    const b_indir = self.indirect_arena.device_address;
+    const b_count = self.count_arena.device_address;
+    const b_cpu_trans = self.cputransform_arena.device_address;
+    const b_drawmap = self.drawmap_arena.device_address;
+    const b_ui = self.uiinstance_arena.device_address;
 
     // Calculate byte offsets for this specific frame
     const frame_u64 = @as(u64, frame_index);
@@ -478,12 +380,12 @@ pub fn updateScene(
     // Inject the offset pointers directly into the shader!
     ptr.transforms = b_trans + (frame_u64 * MAX_OBJECTS * @sizeOf(Transform));
     ptr.cpu_transforms = b_cpu_trans + (frame_u64 * CPU_TRANSFORMS * @sizeOf(Transform));
-    ptr.drawCount = b_count + (frame_u64 * @sizeOf(u32));
+    ptr.counters = b_count + (frame_u64 * @sizeOf(GPUCounters));
     ptr.drawMap = b_drawmap + (frame_u64 * MAX_OBJECTS * @sizeOf(u32));
     ptr.meshes = b_meshes + (frame_u64 * MAX_OBJECTS * @sizeOf(MeshInstance));
     ptr.uiobjects = b_ui + (frame_u64 * MAX_OBJECTS * @sizeOf(UIInstance));
-    ptr.meshcount = self.mesh_instance_offset;
-    ptr.uielemcount = self.ui_instance_offset;
+    ptr.meshcount = self.meshinstance_arena.allocator.offset / @sizeOf(MeshInstance);
+    ptr.uielemcount = self.uiinstance_arena.allocator.offset / @sizeOf(UIInstance);
     if (config.meshshading) {
         ptr.indirectCommands = b_indir +
             (frame_u64 * MAX_OBJECTS * @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT));
@@ -573,6 +475,19 @@ pub fn getBufferAddress(self: *Self, buffer: AllocatedBuffer) c.VkDeviceAddress 
         @panic("");
     }
     return adr;
+}
+
+pub fn requestReadback(self: *Self, cmd: c.VkCommandBuffer, src_buffer: c.VkBuffer, size: c.VkDeviceSize, src_offset: c.VkDeviceSize) !u32 {
+    const dst_offset = try self.readback_arena.allocate(@intCast(size));
+
+    const copy_region = c.VkBufferCopy{
+        .srcOffset = src_offset,
+        .dstOffset = self.readback_arena.base_offset + dst_offset,
+        .size = size,
+    };
+
+    c.vkCmdCopyBuffer(cmd, src_buffer, self.readback_arena.buffer.buffer, 1, &copy_region);
+    return dst_offset;
 }
 
 pub fn deinitImage(self: *Self, image: AllocatedImage) void {
@@ -825,29 +740,142 @@ pub fn createDepthImage(
     return depthimage;
 }
 
+pub fn uploadMesh(
+    self: *Self,
+    core: *Core,
+    vertices: []const Vertex,
+    indices: []const u32,
+) !void {
+    const v_size = vertices.len * @sizeOf(Vertex);
+    const i_size = indices.len * @sizeOf(u32);
+
+    const v_bytes = std.mem.sliceAsBytes(vertices);
+    const i_bytes = std.mem.sliceAsBytes(indices);
+
+    const current_v_offset = try self.vertex_arena.allocate(@intCast(v_size));
+    const current_i_offset = try self.index_arena.allocate(@intCast(i_size));
+    const current_mesh_offset = try self.mesh_arena.allocate(@sizeOf(Mesh));
+
+    self.upload(&core.asynccontext, v_bytes, self.vertex_arena.buffer, self.vertex_arena.base_offset + current_v_offset);
+    self.upload(&core.asynccontext, i_bytes, self.index_arena.buffer, self.index_arena.base_offset + current_i_offset);
+
+    const mesh = Mesh{
+        .vertexBuffer = self.vertex_arena.getAddress(current_v_offset),
+        .indexBuffer = self.index_arena.getAddress(current_i_offset),
+        .indexCount = @as(u32, @intCast(indices.len)),
+        .pad = 0,
+    };
+
+    self.upload(
+        &core.asynccontext,
+        std.mem.asBytes(&mesh),
+        self.mesh_arena.buffer,
+        self.mesh_arena.base_offset + current_mesh_offset,
+    );
+}
+
+pub fn uploadTexture(
+    self: *Self,
+    core: *Core,
+    descriptormanager: *DescriptorManager,
+    data: []const u8,
+    extent: c.VkExtent3D,
+    format: c.VkFormat,
+    mipmapped: bool,
+) AllocatedImage {
+    if (self.texture_count >= MAX_TEXTURES) {
+        @panic("Exceeded maximum bindless textures!");
+    }
+
+    const staging = self.createBuffer(
+        data.len,
+        c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        c.VMA_MEMORY_USAGE_CPU_ONLY, // Changed from CPU_TO_GPU
+    );
+    defer self.destroy(staging);
+
+    const mapped_data = @as([*]u8, @ptrCast(staging.info.pMappedData.?));
+    @memcpy(mapped_data[0..data.len], data);
+
+    var new_image = self.createImage(
+        extent,
+        format,
+        c.VK_IMAGE_USAGE_SAMPLED_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        mipmapped,
+    );
+
+    core.asynccontext.submitBegin();
+    const cmd = core.asynccontext.commandbuffer;
+
+    imageop.transition(
+        cmd,
+        new_image.image,
+        c.VK_IMAGE_LAYOUT_UNDEFINED,
+        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    );
+
+    const image_copy_region: c.VkBufferImageCopy = .{
+        .bufferOffset = 0,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource = .{
+            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+            .mipLevel = 0,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+        .imageExtent = extent,
+    };
+
+    c.vkCmdCopyBufferToImage(
+        cmd,
+        staging.buffer,
+        new_image.image,
+        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,
+        &image_copy_region,
+    );
+
+    imageop.transition(
+        cmd,
+        new_image.image,
+        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    );
+    core.asynccontext.submitEnd();
+
+    new_image.view = createView(self.device, new_image.image, format, if (mipmapped) 0 else 1);
+    new_image.bindless_index = self.texture_count;
+    self.texture_count += 1;
+
+    descriptormanager.writeBindlessTexture(
+        self.device,
+        new_image.view,
+        self.global_sampler,
+        new_image.bindless_index,
+    );
+
+    return new_image;
+}
+
 // TODO move into separate file
-pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) void {
+pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) !void {
     const vertex_count = size;
     const index_count = size * 6;
     const v_size = vertex_count * @sizeOf(Vertex);
     const i_size = index_count * @sizeOf(u32);
 
-    // 1. Capture current offsets (PRE-BUMP)
-    const current_v_offset = self.vertex_byte_offset;
-    const current_i_offset = self.index_byte_offset;
-    const current_mesh_offset = self.mesh_byte_offset;
-
-    // 2. Bump the allocators for the NEXT allocations
-    self.vertex_byte_offset += @intCast(v_size);
-    self.index_byte_offset += @intCast(i_size);
+    const current_v_offset = try self.vertex_arena.allocate(@intCast(v_size));
+    const current_i_offset = try self.index_arena.allocate(@intCast(i_size));
+    
+    var current_mesh_offset: u32 = 0;
     if (size != 0) {
-        self.mesh_byte_offset += @sizeOf(Mesh);
+        current_mesh_offset = try self.mesh_arena.allocate(@sizeOf(Mesh));
     }
 
-    // 3. Build the Mesh using the PRE-BUMP offsets
     const mesh = Mesh{
-        .vertexBuffer = self.vertexaddr + current_v_offset,
-        .indexBuffer = self.indexaddr + current_i_offset,
+        .vertexBuffer = self.vertex_arena.getAddress(current_v_offset),
+        .indexBuffer = self.index_arena.getAddress(current_i_offset),
         .indexCount = @intCast(index_count),
         .pad = 0,
     };
@@ -855,135 +883,134 @@ pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) void {
     self.upload(
         &core.asynccontext,
         std.mem.asBytes(&mesh),
-        self.meshbuffer,
-        current_mesh_offset,
+        self.mesh_arena.buffer,
+        self.mesh_arena.base_offset + current_mesh_offset,
     );
 
     const instance = MeshInstance{
-        .meshBuffer = self.meshbufferaddr + current_mesh_offset,
+        .meshBuffer = self.mesh_arena.getAddress(current_mesh_offset),
         .transformIndex = 0, // No transform for now
         .materialIndex = 0, // Material lives here!
     };
 
     for (0..Core.multibuffering) |i| {
         const frame_base_offset = i * MAX_OBJECTS * @sizeOf(MeshInstance);
+        const current_instance_offset = try self.meshinstance_arena.allocate(@sizeOf(MeshInstance));
+        // Wait, meshinstance_arena already accounts for multibuffering sequentially
+        // Actually, no, if we allocate here sequentially, it will put instances consecutively, not strided.
+        // Let's just stride manually for now if that's what was done.
+        
         self.upload(
             &core.asynccontext,
             std.mem.asBytes(&instance),
-            self.meshinstancebuffer,
-            frame_base_offset + self.mesh_instance_offset * @sizeOf(MeshInstance),
+            self.meshinstance_arena.buffer,
+            self.meshinstance_arena.base_offset + frame_base_offset + current_instance_offset / Core.multibuffering,
         );
-    }
-    if (size != 0) {
-        self.mesh_instance_offset += 1;
     }
 }
 
-pub fn initEmptyUI(self: *Self, core: *Core, size: usize) void {
+pub fn initEmptyUI(self: *Self, core: *Core, size: usize) !void {
     const vertex_count = size;
     const v_size = vertex_count * @sizeOf(Vertex);
 
-    // 1. Capture current offsets (PRE-BUMP)
-    const current_v_offset = self.vertex_byte_offset;
-    const current_ui_offset = self.ui_byte_offset;
-
-    // 2. Bump the allocators for the NEXT allocations
-    self.vertex_byte_offset += @intCast(v_size);
+    const current_v_offset = try self.vertex_arena.allocate(@intCast(v_size));
+    var current_ui_offset: u32 = 0;
     if (size != 0) {
-        self.ui_byte_offset += @sizeOf(UIElement);
+        current_ui_offset = try self.ui_arena.allocate(@sizeOf(UIElement));
     }
 
-    // 3. Build the ui using the PRE-BUMP offsets
     const mesh = UIElement{
-        .vertexBuffer = self.vertexaddr + current_v_offset,
+        .vertexBuffer = self.vertex_arena.getAddress(current_v_offset),
         .vertexCount = @intCast(vertex_count),
         .pad = 0,
-        // (Removed materialIndex here)
     };
 
     self.upload(
         &core.asynccontext,
         std.mem.asBytes(&mesh),
-        self.uibuffer, // The pool of geometry structs
-        current_ui_offset,
+        self.ui_arena.buffer, // The pool of geometry structs
+        self.ui_arena.base_offset + current_ui_offset,
     );
 
-    // 5. Build the Instance pointing to the PRE-BUMP mesh offset
     const instance = UIInstance{
-        .UIBuffer = self.uibufferaddr + current_ui_offset,
+        .UIBuffer = self.ui_arena.getAddress(current_ui_offset),
         .transformIndex = 0,
         .type = 0,
     };
 
+    const current_instance_offset = try self.uiinstance_arena.allocate(@sizeOf(UIInstance));
+    const normalized_offset = current_instance_offset;
+
     for (0..Core.multibuffering) |i| {
         const frame_base_offset = i * MAX_OBJECTS * @sizeOf(UIInstance);
         self.upload(
             &core.asynccontext,
             std.mem.asBytes(&instance),
-            self.uiinstancebuffer,
-            frame_base_offset + self.ui_instance_offset * @sizeOf(UIInstance),
+            self.uiinstance_arena.buffer,
+            self.uiinstance_arena.base_offset + frame_base_offset + normalized_offset,
         );
-    }
-    if (size != 0) {
-        self.ui_instance_offset += 1;
     }
 }
 
 // TODO move into separate file
-pub fn testUI(self: *Self, core: *Core) void {
-    // 1. Pack our 3 controlpoints into an array
-    const mock_curves = [_]Vertex{
+pub fn testSlugFont(self: *Self, core: *Core) !void {
+    // A simple letter "A" made of quadratic bezier curves
+    // P0, P1, P2 for each segment
+    const letter_A_curves = [_]Vertex{
+        // Left leg
         .{ .position = .{ .x = 100, .y = 100, .z = 0 } },
-        .{ .position = .{ .x = 200, .y = 600, .z = 0 } },
-        .{ .position = .{ .x = 400, .y = 100, .z = 0 } },
+        .{ .position = .{ .x = 200, .y = 300, .z = 0 } },
+        .{ .position = .{ .x = 300, .y = 500, .z = 0 } },
+
+        // Right leg
+        .{ .position = .{ .x = 300, .y = 500, .z = 0 } },
+        .{ .position = .{ .x = 400, .y = 300, .z = 0 } },
+        .{ .position = .{ .x = 500, .y = 100, .z = 0 } },
+
+        // Crossbar
+        .{ .position = .{ .x = 200, .y = 300, .z = 0 } },
+        .{ .position = .{ .x = 300, .y = 300, .z = 0 } },
+        .{ .position = .{ .x = 400, .y = 300, .z = 0 } },
     };
 
-    // const UI_TYPE_RECT = 0;
     const UI_TYPE_BEZIER_CURVE = 1;
-    const curve_bytes = std.mem.sliceAsBytes(&mock_curves);
+    const curve_bytes = std.mem.sliceAsBytes(&letter_A_curves);
 
-    // 2. Safety check for your giant buffer
-    if (self.vertex_byte_offset + curve_bytes.len > MAX_GEOMETRY_BYTES) {
-        @panic("Giant Geometry Buffer is full!");
-    }
-
-    const vertex_count = mock_curves.len;
+    const vertex_count = letter_A_curves.len;
     const v_size = vertex_count * @sizeOf(Vertex);
 
-    // 1. Capture current offsets (PRE-BUMP)
-    const current_v_offset = self.vertex_byte_offset;
-    const current_ui_offset = self.ui_byte_offset;
-    // 2. Bump the allocators for the NEXT allocations
-    self.vertex_byte_offset += v_size;
-    self.ui_byte_offset += @sizeOf(UIElement);
+    const current_v_offset = try self.vertex_arena.allocate(@intCast(v_size));
+    const current_ui_offset = try self.ui_arena.allocate(@sizeOf(UIElement));
 
     // Upload via Staging Buffer
-    self.upload(&core.asynccontext, curve_bytes, self.vertexbuffer, current_v_offset);
+    self.upload(&core.asynccontext, curve_bytes, self.vertex_arena.buffer, self.vertex_arena.base_offset + current_v_offset);
 
     // 3. Build the ui using the PRE-BUMP offsets
     const mesh = UIElement{
-        .vertexBuffer = self.vertexaddr + current_v_offset,
+        .vertexBuffer = self.vertex_arena.getAddress(current_v_offset),
         .vertexCount = vertex_count,
         .pad = 0,
     };
 
-    self.upload(&core.asynccontext, std.mem.asBytes(&mesh), self.uibuffer, current_ui_offset);
+    self.upload(&core.asynccontext, std.mem.asBytes(&mesh), self.ui_arena.buffer, self.ui_arena.base_offset + current_ui_offset);
 
     // 5. Build the Instance pointing to the PRE-BUMP mesh offset
     const instance = UIInstance{
-        .UIBuffer = self.uibufferaddr + current_ui_offset,
+        .UIBuffer = self.ui_arena.getAddress(current_ui_offset),
         .transformIndex = 0,
         .type = UI_TYPE_BEZIER_CURVE,
     };
+
+    const current_instance_offset = try self.uiinstance_arena.allocate(@sizeOf(UIInstance));
+    const normalized_offset = current_instance_offset;
 
     for (0..Core.multibuffering) |i| {
         const frame_base_offset = i * MAX_OBJECTS * @sizeOf(UIInstance);
         self.upload(
             &core.asynccontext,
             std.mem.asBytes(&instance),
-            self.uiinstancebuffer,
-            frame_base_offset + self.ui_instance_offset * @sizeOf(UIInstance),
+            self.uiinstance_arena.buffer,
+            self.uiinstance_arena.base_offset + frame_base_offset + normalized_offset,
         );
     }
-    self.ui_instance_offset += 1;
 }

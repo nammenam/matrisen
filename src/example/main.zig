@@ -2,15 +2,15 @@ const std = @import("std");
 const m = @import("matrisen");
 const log = std.log.scoped(.main);
 const Core = m.Core;
-const Vertex = m.BufferManager.Vertex;
+const Vertex = m.ResourceManager.Vertex;
 const Camera = m.Camera;
-const BufferManager = m.BufferManager;
+const ResourceManager = m.ResourceManager;
 const Quat = m.linalg.Quat(f32);
 const Vec2 = m.linalg.Vec2(f32);
 const Vec3 = m.linalg.Vec3(f32);
 const Vec4 = m.linalg.Vec4(f32);
 const Mat4x4 = m.linalg.Mat4x4(f32);
-const Mesh = m.BufferManager.Mesh;
+const Mesh = m.ResourceManager.Mesh;
 
 pub fn loop(io: std.Io, engine: *Core, window: *m.Window) !void {
     window.toggleMouseCapture();
@@ -46,8 +46,8 @@ pub fn main(init: std.process.Init) !void {
     var engine: Core = .init(allocator, &window);
     defer engine.deinit();
 
-    try engine.buffermanager.initEngineBuffers(&engine, &engine.descriptormanager);
-    engine.buffermanager.initEmptyMesh(&engine, 256 * 256);
-    engine.buffermanager.testUI(&engine);
+    try engine.resourcemanager.initEngineBuffers(&engine, &engine.descriptormanager);
+    try engine.resourcemanager.initEmptyMesh(&engine, 256 * 256);
+    // try engine.resourcemanager.testSlugFont(&engine);
     try loop(io, &engine, &window);
 }

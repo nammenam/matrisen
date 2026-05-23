@@ -70,6 +70,17 @@ public struct MeshInstance {
   public uint materialIndex; // can be arbitrarly packed
 };
 
+public struct GPUCounters {
+  public uint drawCount;
+  public uint vertexOffset;
+  public uint indexOffset;
+  public uint meshOffset;
+  public uint uiVertexOffset;
+  public uint uiElementOffset;
+  public uint pad0;
+  public uint pad1;
+};
+
 public struct SceneData {
   public float4x4 viewproj;
   public float4 ambient_color;
@@ -87,7 +98,7 @@ public struct SceneData {
 #else
   public VkDrawIndirectCommand *indirectCommands;
 #endif
-  public uint *drawCount; // shader to shader cpu not concerned
+  public GPUCounters *counters; // written to by cpu (cleared) and gpu
   public uint *drawMap;   // shader to shader cpu not concerned
   // counts
   public uint meshCount;   // number of meshInstance uploaded/prepared by cpu

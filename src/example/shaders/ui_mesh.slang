@@ -256,6 +256,8 @@ void uiMesh(uint workgroupID : SV_GroupID, uint localID : SV_GroupIndex,
                 prims[localID] = uint3(vBase + 2, vBase + 1, vBase + 3);
             }
         }
+    } else {
+        SetMeshOutputCounts(0, 0);
     }
 }
 

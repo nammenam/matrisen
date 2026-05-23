@@ -120,6 +120,10 @@ void terrainMain(uint3 threadId: SV_DispatchThreadID) {
 
   Mesh* mesh = scene.meshes[0].meshBuffer;
   mesh.vertexBuffer[vertIndex] = v;
+  // Set the precise index count for a GRID_SIZE x GRID_SIZE mesh
+  if (x == 0 && y == 0) {
+      mesh.indexCount = (GRID_SIZE - 1) * (GRID_SIZE - 1) * 6;
+  }
   // ---- Write indices (only threads that own a valid quad) ----
   if (x < GRID_SIZE - 1 && y < GRID_SIZE - 1) {
     uint tl = y * GRID_SIZE + x;

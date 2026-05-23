@@ -6,7 +6,7 @@ const checkVkPanic = @import("errors.zig").checkVkPanic;
 const config = @import("config");
 const DescriptorLayoutBuilder = @import("DescriptorLayoutBuilder.zig");
 const PipelineBuilder = @import("PipelineBuilder.zig");
-const MAX_TEXTURES = @import("BufferManager.zig").MAX_TEXTURES;
+const MAX_TEXTURES = @import("ResourceManager.zig").MAX_TEXTURES;
 
 const shaders = @import("../shaders.zig");
 
