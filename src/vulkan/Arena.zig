@@ -1,3 +1,13 @@
+// Arena gets two new concepts:
+
+// stride: u32 — the per-frame slot size (e.g. MAX_OBJECTS * @sizeOf(MeshInstance)), set at sub-allocation time
+// subAllocateArenaTyped(T, count, frames) — takes the type, count, and frame count, sets stride automatically
+
+// Then the arena exposes:
+
+// allocateTyped(T) — bumps by @sizeOf(T), returns a slot index (not a raw byte offset)
+// getAddressForFrame(slot_index, frame) — computes base + frame * stride + slot * @sizeOf(T) internally
+
 const std = @import("std");
 const c = @import("c");
 const errors = @import("errors.zig");

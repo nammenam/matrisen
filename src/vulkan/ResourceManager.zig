@@ -29,7 +29,7 @@ const Mat3x3 = @import("../math/Mat.zig").Mat3x3(f32);
 const Mat4x4 = @import("../math/Mat.zig").Mat4x4(f32);
 
 pub const MAX_GEOMETRY_BYTES = 64 * 1024 * 1024; // 64 MB for verts/indices
-pub const MAX_TEXTURES = 4096; // 4 KB for images
+pub const MAX_TEXTURES = 4096;
 pub const MAX_OBJECTS = 4096;
 pub const CPU_TRANSFORMS = 100;
 
@@ -102,7 +102,7 @@ pub const MeshInstance = extern struct {
 pub const UIInstance = extern struct {
     UIBuffer: u64, // *UIElement
     transformIndex: u32,
-    type: u32, // this is how we interpet the vertices
+    type: u32,
 };
 
 pub const VertexCount = extern struct {
@@ -111,15 +111,10 @@ pub const VertexCount = extern struct {
 };
 
 pub const DrawCount = u32;
-
 pub const MeshCount = u32;
-
 pub const UICount = u32;
-
 pub const Position = Vec4;
-
 pub const Orientation = Quat;
-
 pub const Transform = DualQuat;
 
 pub const DeviceBufferAddresses = extern struct {
@@ -135,7 +130,7 @@ pub const DeviceBufferAddresses = extern struct {
 
 pub const SceneData = extern struct {
     addresses: DeviceBufferAddresses,
-    viewproj: Mat4x4, // use DualQuat??
+    viewproj: Mat4x4,
     ambient_color: Vec4,
     sun_direction: Vec4,
     sun_color: Vec4,
@@ -172,7 +167,7 @@ index_arena: Arena = undefined,
 mesh_arena: Arena = undefined,
 ui_arena: Arena = undefined,
 
-// Sub-allocated from dynamic_gpu_arena (Double-buffered, GPU-computed objects)
+// Sub-allocated from dynamic_gpu_arena (Multi-buffered, GPU-computed objects)
 meshinstance_arena: Arena = undefined,
 uiinstance_arena: Arena = undefined,
 transform_arena: Arena = undefined,
@@ -181,11 +176,11 @@ count_arena: Arena = undefined,
 draw_count: Arena = undefined,
 drawmap_arena: Arena = undefined,
 
-// Sub-allocated from dynamic_cpu_arena (Double-buffered, Host-visible)
+// Sub-allocated from dynamic_cpu_arena (Multi-buffered, Host-visible)
 dynamicvertex_arena: Arena = undefined,
 cputransform_arena: Arena = undefined,
 
-// Uniforms and binded buffers
+// Uniforms
 scenebuffers: [Core.multibuffering]AllocatedBuffer = @splat(undefined),
 
 texture_count: u32 = 0,
@@ -217,7 +212,6 @@ pub fn destroyBuffers(self: *Self) void {
     if (self.readback_arena.buffer.buffer != null) self.readback_arena.buffer.destroy(self.gpuallocator);
 }
 
-// Initializes the memory arenas with MULTI-BUFFERING sizing
 pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *DescriptorManager) !void {
     const mb = Core.multibuffering;
 
@@ -225,98 +219,105 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     // Core arenas
     // ====================================================================
 
-    // 1. Static CPU Arena (CPU to GPU, Write once)
     const static_cpu_buf = self.createBuffer(
-        128 * 1024 * 1024, // 128 MB
+        128 * 1024 * 1024,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT |
             c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
     self.static_cpu_arena = Arena.init(static_cpu_buf, 0, 0, 128 * 1024 * 1024);
 
-    // 2. Dynamic CPU Arena (CPU to GPU, Ring buffered or persistently mapped)
     const dynamic_cpu_buf = self.createBuffer(
-        64 * 1024 * 1024, // 64 MB
+        64 * 1024 * 1024,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_CPU_TO_GPU,
     );
-    {
-        const addr = self.getBufferAddress(dynamic_cpu_buf);
-        self.dynamic_cpu_arena = Arena.init(dynamic_cpu_buf, addr, 0, 64 * 1024 * 1024);
-    }
+    self.dynamic_cpu_arena = Arena.init(
+        dynamic_cpu_buf,
+        self.getBufferAddress(dynamic_cpu_buf),
+        0,
+        64 * 1024 * 1024,
+    );
 
-    // 3. Static GPU Arena (GPU Only, procedural static meshes, loaded once)
     const static_gpu_buf = self.createBuffer(
-        256 * 1024 * 1024, // 256 MB
+        256 * 1024 * 1024,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
             c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
-    {
-        const addr = self.getBufferAddress(static_gpu_buf);
-        self.static_gpu_arena = Arena.init(static_gpu_buf, addr, 0, 256 * 1024 * 1024);
-    }
+    self.static_gpu_arena = Arena.init(
+        static_gpu_buf,
+        self.getBufferAddress(static_gpu_buf),
+        0,
+        256 * 1024 * 1024,
+    );
 
-    // 4. Dynamic GPU Arena (GPU Only, cleared every frame for compute output)
     const dynamic_gpu_buf = self.createBuffer(
-        128 * 1024 * 1024, // 128 MB
+        128 * 1024 * 1024,
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
             c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
-    {
-        const addr = self.getBufferAddress(dynamic_gpu_buf);
-        self.dynamic_gpu_arena = Arena.init(dynamic_gpu_buf, addr, 0, 128 * 1024 * 1024);
-    }
+    self.dynamic_gpu_arena = Arena.init(
+        dynamic_gpu_buf,
+        self.getBufferAddress(dynamic_gpu_buf),
+        0,
+        128 * 1024 * 1024,
+    );
 
-    // 5. Readback Arena (GPU to CPU, for retrieving data)
     const readback_buf = self.createBuffer(
-        16 * 1024 * 1024, // 16 MB
+        16 * 1024 * 1024,
         c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         c.VMA_MEMORY_USAGE_GPU_TO_CPU,
     );
-    // does not need device buffer address
     self.readback_arena = Arena.init(readback_buf, 0, 0, 16 * 1024 * 1024);
 
     // ====================================================================
-    // Static arenas (change rarely) mega buffers GPU Only
+    // Static arenas (single-buffered, written once)
     // ====================================================================
 
     self.vertex_arena = try self.static_gpu_arena.subAllocateArena(MAX_GEOMETRY_BYTES);
     self.index_arena = try self.static_gpu_arena.subAllocateArena(MAX_GEOMETRY_BYTES);
-    self.mesh_arena = try self.static_gpu_arena.subAllocateArena(@sizeOf(Mesh) * MAX_OBJECTS);
-    self.ui_arena = try self.static_gpu_arena.subAllocateArena(@sizeOf(UIElement) * MAX_OBJECTS);
+    self.mesh_arena = try self.static_gpu_arena.subAllocateArenaTyped(Mesh, MAX_OBJECTS, 1);
+    self.ui_arena = try self.static_gpu_arena.subAllocateArenaTyped(UIElement, MAX_OBJECTS, 1);
 
     // ====================================================================
-    // Dynamic arenas (double buffered) GPU Only
+    // Dynamic arenas (multi-buffered — one slot per frame)
     // ====================================================================
 
-    self.meshinstance_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(MeshInstance) * MAX_OBJECTS * mb);
-    self.uiinstance_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(UIInstance) * MAX_OBJECTS * mb);
-    self.transform_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(Transform) * MAX_OBJECTS * mb);
+    self.meshinstance_arena = try self.dynamic_gpu_arena.subAllocateArenaTyped(MeshInstance, MAX_OBJECTS, mb);
+    self.uiinstance_arena = try self.dynamic_gpu_arena.subAllocateArenaTyped(UIInstance, MAX_OBJECTS, mb);
+    self.transform_arena = try self.dynamic_gpu_arena.subAllocateArenaTyped(Transform, MAX_OBJECTS, mb);
+
     if (config.meshshading) {
-        self.indirect_arena = try self.dynamic_gpu_arena.subAllocateArena(
-            @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT) * MAX_OBJECTS * mb,
+        self.indirect_arena = try self.dynamic_gpu_arena.subAllocateArenaTyped(
+            c.VkDrawMeshTasksIndirectCommandEXT,
+            MAX_OBJECTS,
+            mb,
         );
     } else {
-        self.indirect_arena = try self.dynamic_gpu_arena.subAllocateArena(
-            @sizeOf(c.VkDrawIndirectCommand) * MAX_OBJECTS * mb,
+        self.indirect_arena = try self.dynamic_gpu_arena.subAllocateArenaTyped(
+            c.VkDrawIndirectCommand,
+            MAX_OBJECTS,
+            mb,
         );
     }
-    self.count_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(VertexCount) * mb);
-    self.draw_count = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(DrawCount) * mb);
-    self.drawmap_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(u32) * MAX_OBJECTS * mb);
+
+    self.count_arena = try self.dynamic_gpu_arena.subAllocateArenaTyped(VertexCount, 1, mb);
+    self.draw_count = try self.dynamic_gpu_arena.subAllocateArenaTyped(DrawCount, 1, mb);
+    self.drawmap_arena = try self.dynamic_gpu_arena.subAllocateArenaTyped(u32, MAX_OBJECTS, mb);
 
     // ====================================================================
-    // Dynamic arenas Host visible (CPU visible)
+    // Dynamic CPU-visible arenas (multi-buffered, host visible)
     // ====================================================================
 
-    self.dynamicvertex_arena = try self.dynamic_cpu_arena.subAllocateArena(@sizeOf(Vertex) * MAX_OBJECTS * mb);
-    self.cputransform_arena = try self.dynamic_cpu_arena.subAllocateArena(@sizeOf(Transform) * CPU_TRANSFORMS * mb);
+    self.dynamicvertex_arena = try self.dynamic_cpu_arena.subAllocateArenaTyped(Vertex, MAX_OBJECTS, mb);
+    self.cputransform_arena = try self.dynamic_cpu_arena.subAllocateArenaTyped(Transform, CPU_TRANSFORMS, mb);
 
     // ====================================================================
     // Uniforms
     // ====================================================================
+
     for (&self.scenebuffers, 0..) |*buf, i| {
         buf.* = self.createBuffer(
             @sizeOf(SceneData),
@@ -349,21 +350,30 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         self.alloc_callbacks,
         &self.global_sampler,
     ));
-    // fill pointers with 0 so we dont crash the gpu
+
     self.initEmptyMesh(core, 0) catch @panic("Failed to init empty mesh");
     self.initEmptyUI(core, 0) catch @panic("Failed to init empty UI");
 }
 
+// ========================================================================
+// Counters
+// ========================================================================
+
 pub fn getMeshInstanceCount(self: *const Self) u32 {
-    return self.meshinstance_arena.allocator.offset / @sizeOf(MeshInstance) / Core.multibuffering;
+    return self.meshinstance_arena.countAllocated(MeshInstance);
 }
 
 pub fn getUIInstanceCount(self: *const Self) u32 {
-    return self.uiinstance_arena.allocator.offset / @sizeOf(UIInstance) / Core.multibuffering;
+    return self.uiinstance_arena.countAllocated(UIInstance);
 }
 
-// Writes the SceneData with dynamic offsets based on the frame
+// ========================================================================
+// Scene update — inject per-frame GPU pointers into SceneData
+// ========================================================================
+
 pub fn updateScene(self: *Self, frame_index: u8, aspect_ratio: f32, camera: Camera, time: f32) void {
+    _ = time;
+
     var ptr = @as(*SceneData, @ptrCast(@alignCast(self.scenebuffers[frame_index].info.pMappedData.?)));
 
     const view = camera.view();
@@ -375,35 +385,24 @@ pub fn updateScene(self: *Self, frame_index: u8, aspect_ratio: f32, camera: Came
     ptr.sun_direction = Vec3.new(0.2, -0.5, 1.0).normalized().toVec4(0.0);
     ptr.viewport = Vec4.new(2000, 1200, 0, 0);
 
-    // Calculate BDA base addresses
-    const b_trans = self.transform_arena.getAddress(self.transform_arena.allocator.start);
-    const b_meshes = self.meshinstance_arena.getAddress(self.meshinstance_arena.allocator.start);
-    const b_indir = self.indirect_arena.getAddress(self.indirect_arena.allocator.start);
-    const b_cpu_trans = self.cputransform_arena.getAddress(self.cputransform_arena.allocator.start);
-    const b_drawmap = self.drawmap_arena.getAddress(self.drawmap_arena.allocator.start);
-    const b_ui = self.uiinstance_arena.getAddress(self.uiinstance_arena.allocator.start);
+    const fi: u32 = frame_index;
 
-    // Calculate byte offsets for this specific frame
-    const frame_u64 = @as(u64, frame_index);
-    _ = time;
+    // Each arena already knows its slot_stride and root address — just ask it.
+    ptr.addresses.transforms = self.transform_arena.getFrameBaseAddress(fi);
+    ptr.addresses.cpu_transforms = self.cputransform_arena.getFrameBaseAddress(fi);
+    ptr.addresses.drawcount = self.draw_count.getFrameBaseAddress(fi);
+    ptr.addresses.drawMap = self.drawmap_arena.getFrameBaseAddress(fi);
+    ptr.addresses.meshes = self.meshinstance_arena.getFrameBaseAddress(fi);
+    ptr.addresses.uiobjects = self.uiinstance_arena.getFrameBaseAddress(fi);
+    ptr.addresses.indirectCommands = self.indirect_arena.getFrameBaseAddress(fi);
 
-    // Inject the offset pointers directly into the shader!
-    ptr.addresses.transforms = b_trans + (frame_u64 * MAX_OBJECTS * @sizeOf(Transform));
-    ptr.addresses.cpu_transforms = b_cpu_trans + (frame_u64 * CPU_TRANSFORMS * @sizeOf(Transform));
-    ptr.addresses.drawcount = self.draw_count.getAddress(self.draw_count.allocator.start) + (frame_u64 * @sizeOf(DrawCount));
-    ptr.addresses.drawMap = b_drawmap + (frame_u64 * MAX_OBJECTS * @sizeOf(u32));
-    ptr.addresses.meshes = b_meshes + (frame_u64 * MAX_OBJECTS * @sizeOf(MeshInstance));
-    ptr.addresses.uiobjects = b_ui + (frame_u64 * MAX_OBJECTS * @sizeOf(UIInstance));
-    ptr.meshcount = @intCast((self.meshinstance_arena.allocator.current - self.meshinstance_arena.allocator.start) / @sizeOf(MeshInstance));
-    ptr.uielemcount = @intCast((self.uiinstance_arena.allocator.current - self.uiinstance_arena.allocator.start) / @sizeOf(UIInstance));
-    if (config.meshshading) {
-        ptr.addresses.indirectCommands = b_indir +
-            (frame_u64 * MAX_OBJECTS * @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT));
-    } else {
-        ptr.addresses.indirectCommands = b_indir +
-            (frame_u64 * MAX_OBJECTS * @sizeOf(c.VkDrawIndirectCommand));
-    }
+    ptr.meshcount = self.meshinstance_arena.countAllocated(MeshInstance);
+    ptr.uielemcount = self.uiinstance_arena.countAllocated(UIInstance);
 }
+
+// ========================================================================
+// Buffer helpers
+// ========================================================================
 
 pub fn createBuffer(
     self: *Self,
@@ -416,12 +415,10 @@ pub fn createBuffer(
         .size = alloc_size,
         .usage = usage,
     };
-
     const vma_alloc_info: c.VmaAllocationCreateInfo = .{
         .usage = memory_usage,
         .flags = c.VMA_ALLOCATION_CREATE_MAPPED_BIT,
     };
-
     var new_buffer: AllocatedBuffer = undefined;
     errors.checkVkPanic(c.vmaCreateBuffer(
         self.gpuallocator,
@@ -442,8 +439,6 @@ pub fn upload(
     dst_offset: c.VkDeviceSize,
 ) void {
     const size = data_slice.len;
-
-    // Create staging buffer (CPU visible)
     const staging_buffer = self.createBuffer(
         size,
         c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -453,34 +448,31 @@ pub fn upload(
 
     if (staging_buffer.info.pMappedData) |mapped_data_ptr| {
         const byte_data_ptr = @as([*]u8, @ptrCast(mapped_data_ptr));
-        const staging_slice = byte_data_ptr[0..size];
-        @memcpy(staging_slice, data_slice);
+        @memcpy(byte_data_ptr[0..size], data_slice);
     } else {
         std.log.err("Failed to map staging buffer.", .{});
         @panic("");
     }
 
-    // Copy from Staging to Giant Buffer at the correct offset
     asynccontext.submitBegin();
     const copy_region = c.VkBufferCopy{
         .srcOffset = 0,
         .dstOffset = dst_offset,
         .size = size,
     };
-    const cmd = asynccontext.commandbuffer;
-    c.vkCmdCopyBuffer(cmd, staging_buffer.buffer, buffer.buffer, 1, &copy_region);
+    c.vkCmdCopyBuffer(asynccontext.commandbuffer, staging_buffer.buffer, buffer.buffer, 1, &copy_region);
     asynccontext.submitEnd();
 }
 
 pub fn getBufferAddress(self: *Self, buffer: AllocatedBuffer) c.VkDeviceAddress {
-    const deviceaddressinfo = c.VkBufferDeviceAddressInfo{
+    const info = c.VkBufferDeviceAddressInfo{
         .sType = c.VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-        .pNext = null, // Always initialize pNext
+        .pNext = null,
         .buffer = buffer.buffer,
     };
-    const adr = c.vkGetBufferDeviceAddress(self.device, &deviceaddressinfo);
+    const adr = c.vkGetBufferDeviceAddress(self.device, &info);
     if (adr == 0) {
-        std.log.err("Failed to get buffer device address for SSBO. Is the feature enabled?", .{});
+        std.log.err("Failed to get buffer device address. Is the feature enabled?", .{});
         c.vmaDestroyBuffer(self.gpuallocator, buffer.buffer, buffer.allocation);
         @panic("");
     }
@@ -495,16 +487,18 @@ pub fn requestReadback(
     src_offset: c.VkDeviceSize,
 ) !u32 {
     const dst_offset = try self.readback_arena.allocate(@intCast(size));
-
     const copy_region = c.VkBufferCopy{
         .srcOffset = src_offset,
-        .dstOffset = dst_offset,
+        .dstOffset = self.readback_arena.allocator.start + dst_offset,
         .size = size,
     };
-
     c.vkCmdCopyBuffer(cmd, src_buffer, self.readback_arena.buffer.buffer, 1, &copy_region);
     return dst_offset;
 }
+
+// ========================================================================
+// Image helpers
+// ========================================================================
 
 pub fn createImage(
     self: *Self,
@@ -513,7 +507,7 @@ pub fn createImage(
     usage: c.VkImageUsageFlags,
     mipmapped: bool,
 ) AllocatedImage {
-    var new_image: AllocatedImage(1) = undefined;
+    var new_image: AllocatedImage = undefined;
     var img_info = c.VkImageCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .pNext = null,
@@ -544,21 +538,16 @@ pub fn createImage(
         &new_image.allocation,
         null,
     ));
-    var aspect_flags = c.VK_IMAGE_ASPECT_COLOR_BIT;
-    if (format == c.VK_FORMAT_D32_SFLOAT) {
-        aspect_flags = c.VK_IMAGE_ASPECT_DEPTH_BIT;
-    }
 
+    // View is created separately via createView / uploadTexture
     return new_image;
 }
 
 pub fn createView(device: c.VkDevice, image: c.VkImage, format: c.VkFormat, miplevels: u32) c.VkImageView {
     var image_view: c.VkImageView = undefined;
+    var aspect_flags: c_int = c.VK_IMAGE_ASPECT_COLOR_BIT;
+    if (format == c.VK_FORMAT_D32_SFLOAT) aspect_flags = c.VK_IMAGE_ASPECT_DEPTH_BIT;
 
-    var aspect_flags = c.VK_IMAGE_ASPECT_COLOR_BIT;
-    if (format == c.VK_FORMAT_D32_SFLOAT) {
-        aspect_flags = c.VK_IMAGE_ASPECT_DEPTH_BIT;
-    }
     const view_info = c.VkImageViewCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .pNext = null,
@@ -573,180 +562,152 @@ pub fn createView(device: c.VkDevice, image: c.VkImage, format: c.VkFormat, mipl
             .layerCount = 1,
         },
     };
-
-    errors.checkVkPanic(
-        c.vkCreateImageView(device, &view_info, null, &image_view),
-    ) catch @panic("failed to make image view");
+    errors.checkVkPanic(c.vkCreateImageView(device, &view_info, null, &image_view));
     return image_view;
 }
 
-pub fn createDrawImage(
-    self: *Self,
-    extent: c.VkExtent2D,
-    format: c.VkFormat,
-) AllocatedImage {
+pub fn createDrawImage(self: *Self, extent: c.VkExtent2D, format: c.VkFormat) AllocatedImage {
     var drawimage: AllocatedImage = undefined;
     const extent3d: c.VkExtent3D = .{ .width = extent.width, .height = extent.height, .depth = 1 };
-    const drawimageci: c.VkImageCreateInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType = c.VK_IMAGE_TYPE_2D,
-        .format = format,
-        .extent = extent3d,
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        .samples = c.VK_SAMPLE_COUNT_4_BIT,
-        .tiling = c.VK_IMAGE_TILING_OPTIMAL,
-        .usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-            c.VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
-    };
-
-    const drawimageai: c.VmaAllocationCreateInfo = .{
-        .usage = c.VMA_MEMORY_USAGE_GPU_ONLY,
-        .requiredFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-    };
 
     errors.checkVkPanic(c.vmaCreateImage(
         self.gpuallocator,
-        &drawimageci,
-        &drawimageai,
+        &c.VkImageCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = c.VK_IMAGE_TYPE_2D,
+            .format = format,
+            .extent = extent3d,
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = c.VK_SAMPLE_COUNT_4_BIT,
+            .tiling = c.VK_IMAGE_TILING_OPTIMAL,
+            .usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+        },
+        &c.VmaAllocationCreateInfo{
+            .usage = c.VMA_MEMORY_USAGE_GPU_ONLY,
+            .requiredFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        },
         &drawimage.image,
         &drawimage.allocation,
         null,
     ));
-    const draw_image_view_ci: c.VkImageViewCreateInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = drawimage.image,
-        .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
-        .format = format,
-        .subresourceRange = .{
-            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-    };
-
     errors.checkVkPanic(c.vkCreateImageView(
         self.device,
-        &draw_image_view_ci,
+        &c.VkImageViewCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = drawimage.image,
+            .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+            .format = format,
+            .subresourceRange = .{
+                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        },
         self.alloc_callbacks,
         &drawimage.view,
     ));
     return drawimage;
 }
 
-pub fn createRenderImage(
-    self: *Self,
-    extent: c.VkExtent2D,
-    format: c.VkFormat,
-) AllocatedImage {
+pub fn createRenderImage(self: *Self, extent: c.VkExtent2D, format: c.VkFormat) AllocatedImage {
     var renderimage: AllocatedImage = undefined;
     const extent3d: c.VkExtent3D = .{ .width = extent.width, .height = extent.height, .depth = 1 };
-    const resolved_image_ci: c.VkImageCreateInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType = c.VK_IMAGE_TYPE_2D,
-        .format = format,
-        .extent = extent3d,
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        .samples = c.VK_SAMPLE_COUNT_1_BIT,
-        .tiling = c.VK_IMAGE_TILING_OPTIMAL,
-        .usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-            c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-            c.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-    };
-
-    const resolved_image_ai: c.VmaAllocationCreateInfo = .{
-        .usage = c.VMA_MEMORY_USAGE_GPU_ONLY,
-        .requiredFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-    };
 
     errors.checkVkPanic(c.vmaCreateImage(
         self.gpuallocator,
-        &resolved_image_ci,
-        &resolved_image_ai,
+        &c.VkImageCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = c.VK_IMAGE_TYPE_2D,
+            .format = format,
+            .extent = extent3d,
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = c.VK_SAMPLE_COUNT_1_BIT,
+            .tiling = c.VK_IMAGE_TILING_OPTIMAL,
+            .usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                c.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        },
+        &c.VmaAllocationCreateInfo{
+            .usage = c.VMA_MEMORY_USAGE_GPU_ONLY,
+            .requiredFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        },
         &renderimage.image,
         &renderimage.allocation,
         null,
     ));
-    const resolved_view_ci: c.VkImageViewCreateInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = renderimage.image,
-        .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
-        .format = format,
-        .subresourceRange = .{
-            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-    };
-
     errors.checkVkPanic(c.vkCreateImageView(
         self.device,
-        &resolved_view_ci,
+        &c.VkImageViewCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = renderimage.image,
+            .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+            .format = format,
+            .subresourceRange = .{
+                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        },
         self.alloc_callbacks,
         &renderimage.view,
     ));
     return renderimage;
 }
 
-pub fn createDepthImage(
-    self: *Self,
-    extent: c.VkExtent3D,
-    format: c.VkFormat,
-) AllocatedImage {
+pub fn createDepthImage(self: *Self, extent: c.VkExtent3D, format: c.VkFormat) AllocatedImage {
     var depthimage: AllocatedImage = undefined;
-    const drawimageai: c.VmaAllocationCreateInfo = .{
-        .usage = c.VMA_MEMORY_USAGE_GPU_ONLY,
-        .requiredFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-    };
-
-    const depthimageci: c.VkImageCreateInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType = c.VK_IMAGE_TYPE_2D,
-        .format = format,
-        .extent = extent,
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        .samples = c.VK_SAMPLE_COUNT_4_BIT,
-        .tiling = c.VK_IMAGE_TILING_OPTIMAL,
-        .usage = c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-            c.VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
-    };
 
     errors.checkVkPanic(c.vmaCreateImage(
         self.gpuallocator,
-        &depthimageci,
-        &drawimageai,
+        &c.VkImageCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = c.VK_IMAGE_TYPE_2D,
+            .format = format,
+            .extent = extent,
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = c.VK_SAMPLE_COUNT_4_BIT,
+            .tiling = c.VK_IMAGE_TILING_OPTIMAL,
+            .usage = c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+        },
+        &c.VmaAllocationCreateInfo{
+            .usage = c.VMA_MEMORY_USAGE_GPU_ONLY,
+            .requiredFlags = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        },
         &depthimage.image,
         &depthimage.allocation,
         null,
     ));
-
-    const depth_image_view_ci: c.VkImageViewCreateInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = depthimage.image,
-        .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
-        .format = format,
-        .subresourceRange = .{
-            .aspectMask = c.VK_IMAGE_ASPECT_DEPTH_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-    };
     errors.checkVkPanic(c.vkCreateImageView(
         self.device,
-        &depth_image_view_ci,
+        &c.VkImageViewCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = depthimage.image,
+            .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+            .format = format,
+            .subresourceRange = .{
+                .aspectMask = c.VK_IMAGE_ASPECT_DEPTH_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        },
         self.alloc_callbacks,
         &depthimage.view,
     ));
     return depthimage;
 }
+
+// ========================================================================
+// Mesh / UI upload
+// ========================================================================
 
 pub fn uploadMesh(
     self: *Self,
@@ -754,31 +715,24 @@ pub fn uploadMesh(
     vertices: []const Vertex,
     indices: []const u32,
 ) !void {
-    const v_size = vertices.len * @sizeOf(Vertex);
-    const i_size = indices.len * @sizeOf(u32);
+    const v_slot = try self.vertex_arena.allocate(@intCast(vertices.len * @sizeOf(Vertex)));
+    const i_slot = try self.index_arena.allocate(@intCast(indices.len * @sizeOf(u32)));
+    const mesh_slot = try self.mesh_arena.allocateTyped(Mesh, 1);
 
-    const v_bytes = std.mem.sliceAsBytes(vertices);
-    const i_bytes = std.mem.sliceAsBytes(indices);
-
-    const current_v_offset = try self.vertex_arena.allocate(@intCast(v_size));
-    const current_i_offset = try self.index_arena.allocate(@intCast(i_size));
-    const current_mesh_offset = try self.mesh_arena.allocate(@sizeOf(Mesh));
-
-    self.upload(&core.asynccontext, v_bytes, self.vertex_arena.buffer, current_v_offset);
-    self.upload(&core.asynccontext, i_bytes, self.index_arena.buffer, current_i_offset);
+    self.upload(&core.asynccontext, std.mem.sliceAsBytes(vertices), self.vertex_arena.buffer, v_slot);
+    self.upload(&core.asynccontext, std.mem.sliceAsBytes(indices), self.index_arena.buffer, i_slot);
 
     const mesh = Mesh{
-        .vertexBuffer = self.vertex_arena.getAddress(current_v_offset),
-        .indexBuffer = self.index_arena.getAddress(current_i_offset),
-        .indexCount = @as(u32, @intCast(indices.len)),
+        .vertexBuffer = self.vertex_arena.getAddress(v_slot),
+        .indexBuffer = self.index_arena.getAddress(i_slot),
+        .indexCount = @intCast(indices.len),
         .pad = 0,
     };
-
     self.upload(
         &core.asynccontext,
         std.mem.asBytes(&mesh),
         self.mesh_arena.buffer,
-        current_mesh_offset,
+        self.mesh_arena.getBufferOffsetForFrame(Mesh, mesh_slot, 0),
     );
 }
 
@@ -791,19 +745,12 @@ pub fn uploadTexture(
     format: c.VkFormat,
     mipmapped: bool,
 ) AllocatedImage {
-    if (self.texture_count >= MAX_TEXTURES) {
-        @panic("Exceeded maximum bindless textures!");
-    }
+    if (self.texture_count >= MAX_TEXTURES) @panic("Exceeded maximum bindless textures!");
 
-    const staging = self.createBuffer(
-        data.len,
-        c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        c.VMA_MEMORY_USAGE_CPU_ONLY, // Changed from CPU_TO_GPU
-    );
+    const staging = self.createBuffer(data.len, c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, c.VMA_MEMORY_USAGE_CPU_ONLY);
     defer staging.destroy(self.gpuallocator);
 
-    const mapped_data = @as([*]u8, @ptrCast(staging.info.pMappedData.?));
-    @memcpy(mapped_data[0..data.len], data);
+    @memcpy(@as([*]u8, @ptrCast(staging.info.pMappedData.?))[0..data.len], data);
 
     var new_image = self.createImage(
         extent,
@@ -815,35 +762,26 @@ pub fn uploadTexture(
     core.asynccontext.submitBegin();
     const cmd = core.asynccontext.commandbuffer;
 
-    imageop.transition(
-        cmd,
-        new_image.image,
-        c.VK_IMAGE_LAYOUT_UNDEFINED,
-        c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-    );
-
-    const image_copy_region: c.VkBufferImageCopy = .{
-        .bufferOffset = 0,
-        .bufferRowLength = 0,
-        .bufferImageHeight = 0,
-        .imageSubresource = .{
-            .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
-            .mipLevel = 0,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-        .imageExtent = extent,
-    };
-
+    imageop.transition(cmd, new_image.image, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     c.vkCmdCopyBufferToImage(
         cmd,
         staging.buffer,
         new_image.image,
         c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         1,
-        &image_copy_region,
+        &c.VkBufferImageCopy{
+            .bufferOffset = 0,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource = .{
+                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel = 0,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+            .imageExtent = extent,
+        },
     );
-
     imageop.transition(
         cmd,
         new_image.image,
@@ -862,149 +800,130 @@ pub fn uploadTexture(
         self.global_sampler,
         new_image.bindless_index,
     );
-
     return new_image;
 }
 
 pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) !void {
-    const vertex_count = size;
-    const index_count = size * 6;
-    const v_size = vertex_count * @sizeOf(Vertex);
-    const i_size = index_count * @sizeOf(u32);
+    const v_slot = try self.vertex_arena.allocate(@intCast(size * @sizeOf(Vertex)));
+    const i_slot = try self.index_arena.allocate(@intCast(size * 6 * @sizeOf(u32)));
 
-    const current_v_offset = try self.vertex_arena.allocate(@intCast(v_size));
-    const current_i_offset = try self.index_arena.allocate(@intCast(i_size));
-
-    var current_mesh_offset: u32 = 0;
-    if (size != 0) {
-        current_mesh_offset = try self.mesh_arena.allocate(@sizeOf(Mesh));
-    }
+    // Slot 0 in mesh_arena is reserved for the empty sentinel — only allocate
+    // when size > 0 so we don't double-bump on the very first call.
+    const mesh_slot: u32 = if (size != 0) try self.mesh_arena.allocateTyped(Mesh, 1) else 0;
 
     const mesh = Mesh{
-        .vertexBuffer = self.vertex_arena.getAddress(current_v_offset),
-        .indexBuffer = self.index_arena.getAddress(current_i_offset),
-        .indexCount = @intCast(index_count),
+        .vertexBuffer = self.vertex_arena.getAddress(v_slot),
+        .indexBuffer = self.index_arena.getAddress(i_slot),
+        .indexCount = @intCast(size * 6),
         .pad = 0,
     };
-
     self.upload(
         &core.asynccontext,
         std.mem.asBytes(&mesh),
         self.mesh_arena.buffer,
-        current_mesh_offset,
+        self.mesh_arena.getBufferOffsetForFrame(Mesh, mesh_slot, 0),
     );
 
     const instance = MeshInstance{
-        .meshBuffer = self.mesh_arena.getAddress(current_mesh_offset),
-        .transformIndex = 0, // No transform for now
-        .materialIndex = 0, // Material lives here!
+        .meshBuffer = self.mesh_arena.getAddressForFrame(Mesh, mesh_slot, 0),
+        .transformIndex = 0,
+        .materialIndex = 0,
     };
 
-    const current_instance_offset = try self.meshinstance_arena.allocate(@sizeOf(MeshInstance));
-
-    for (0..Core.multibuffering) |i| {
-        const frame_base_offset = i * MAX_OBJECTS * @sizeOf(MeshInstance);
-        const offset = current_instance_offset + frame_base_offset;
-        self.upload(&core.asynccontext, std.mem.asBytes(&instance), self.meshinstance_arena.buffer, offset);
+    // Write the instance into every frame slot.
+    const inst_slot = try self.meshinstance_arena.allocateTyped(MeshInstance, 1);
+    for (0..Core.multibuffering) |fi| {
+        self.upload(
+            &core.asynccontext,
+            std.mem.asBytes(&instance),
+            self.meshinstance_arena.buffer,
+            self.meshinstance_arena.getBufferOffsetForFrame(MeshInstance, inst_slot, @intCast(fi)),
+        );
     }
 }
 
 pub fn initEmptyUI(self: *Self, core: *Core, size: usize) !void {
-    const vertex_count = size;
-    const v_size = vertex_count * @sizeOf(Vertex);
+    const v_slot = try self.vertex_arena.allocate(@intCast(size * @sizeOf(Vertex)));
+    const ui_slot: u32 = if (size != 0) try self.ui_arena.allocateTyped(UIElement, 1) else 0;
 
-    const current_v_offset = try self.vertex_arena.allocate(@intCast(v_size));
-    var current_ui_offset: u32 = 0;
-    if (size != 0) {
-        current_ui_offset = try self.ui_arena.allocate(@sizeOf(UIElement));
-    }
-
-    const mesh = UIElement{
-        .vertexBuffer = self.vertex_arena.getAddress(current_v_offset),
-        .vertexCount = @intCast(vertex_count),
+    const elem = UIElement{
+        .vertexBuffer = self.vertex_arena.getAddress(v_slot),
+        .vertexCount = @intCast(size),
         .pad = 0,
     };
-
     self.upload(
         &core.asynccontext,
-        std.mem.asBytes(&mesh),
-        self.ui_arena.buffer, // The pool of geometry structs
-        current_ui_offset,
+        std.mem.asBytes(&elem),
+        self.ui_arena.buffer,
+        self.ui_arena.getBufferOffsetForFrame(UIElement, ui_slot, 0),
     );
 
     const instance = UIInstance{
-        .UIBuffer = self.ui_arena.getAddress(current_ui_offset),
+        .UIBuffer = self.ui_arena.getAddressForFrame(UIElement, ui_slot, 0),
         .transformIndex = 0,
         .type = 0,
     };
 
-    const current_instance_offset = try self.uiinstance_arena.allocate(@sizeOf(UIInstance));
-
-    for (0..Core.multibuffering) |i| {
-        const frame_base_offset = i * MAX_OBJECTS * @sizeOf(UIInstance);
+    const inst_slot = try self.uiinstance_arena.allocateTyped(UIInstance, 1);
+    for (0..Core.multibuffering) |fi| {
         self.upload(
             &core.asynccontext,
             std.mem.asBytes(&instance),
             self.uiinstance_arena.buffer,
-            current_instance_offset + frame_base_offset,
+            self.uiinstance_arena.getBufferOffsetForFrame(UIInstance, inst_slot, @intCast(fi)),
         );
     }
 }
 
 pub fn testUI(self: *Self, core: *Core) !void {
     const letter_A_curves = [_]Vertex{
+        // Left leg
         .{ .position = .{ .x = 100, .y = 100, .z = 0 } },
         .{ .position = .{ .x = 200, .y = 300, .z = 0 } },
         .{ .position = .{ .x = 300, .y = 500, .z = 0 } },
-
+        // Right leg
         .{ .position = .{ .x = 300, .y = 500, .z = 0 } },
         .{ .position = .{ .x = 400, .y = 300, .z = 0 } },
         .{ .position = .{ .x = 500, .y = 100, .z = 0 } },
-
+        // Crossbar
         .{ .position = .{ .x = 200, .y = 300, .z = 0 } },
         .{ .position = .{ .x = 300, .y = 300, .z = 0 } },
         .{ .position = .{ .x = 400, .y = 300, .z = 0 } },
     };
 
     const UI_TYPE_BEZIER_CURVE = 1;
-    const curve_bytes = std.mem.sliceAsBytes(&letter_A_curves);
+    const vertex_count: u32 = @intCast(letter_A_curves.len);
 
-    const vertex_count = letter_A_curves.len;
-    const v_size = vertex_count * @sizeOf(Vertex);
+    const v_slot = try self.vertex_arena.allocate(@intCast(vertex_count * @sizeOf(Vertex)));
+    const ui_slot = try self.ui_arena.allocateTyped(UIElement, 1);
 
-    const current_v_offset = try self.vertex_arena.allocate(@intCast(v_size));
-    const current_ui_offset = try self.ui_arena.allocate(@sizeOf(UIElement));
+    self.upload(&core.asynccontext, std.mem.sliceAsBytes(&letter_A_curves), self.vertex_arena.buffer, v_slot);
 
-    self.upload(&core.asynccontext, curve_bytes, self.vertex_arena.buffer, current_v_offset);
-
-    const mesh = UIElement{
-        .vertexBuffer = self.vertex_arena.getAddress(current_v_offset),
+    const elem = UIElement{
+        .vertexBuffer = self.vertex_arena.getAddress(v_slot),
         .vertexCount = vertex_count,
         .pad = 0,
     };
-
-    self.upload(&core.asynccontext, std.mem.asBytes(&mesh), self.ui_arena.buffer, current_ui_offset);
+    self.upload(
+        &core.asynccontext,
+        std.mem.asBytes(&elem),
+        self.ui_arena.buffer,
+        self.ui_arena.getBufferOffsetForFrame(UIElement, ui_slot, 0),
+    );
 
     const instance = UIInstance{
-        .UIBuffer = self.ui_arena.getAddress(current_ui_offset),
+        .UIBuffer = self.ui_arena.getAddressForFrame(UIElement, ui_slot, 0),
         .transformIndex = 0,
         .type = UI_TYPE_BEZIER_CURVE,
     };
 
-    const current_instance_offset = try self.uiinstance_arena.allocate(@sizeOf(UIInstance));
-
-    for (0..Core.multibuffering) |i| {
-        const frame_base_offset = i * MAX_OBJECTS * @sizeOf(UIInstance);
+    const inst_slot = try self.uiinstance_arena.allocateTyped(UIInstance, 1);
+    for (0..Core.multibuffering) |fi| {
         self.upload(
             &core.asynccontext,
             std.mem.asBytes(&instance),
             self.uiinstance_arena.buffer,
-            current_instance_offset + frame_base_offset,
-        );
-    }
-}
-           self.uiinstance_arena.buffer,
-            current_instance_offset + frame_base_offset,
+            self.uiinstance_arena.getBufferOffsetForFrame(UIInstance, inst_slot, @intCast(fi)),
         );
     }
 }
