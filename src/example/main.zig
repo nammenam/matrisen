@@ -5,11 +5,11 @@ const Core = m.Core;
 const Vertex = m.ResourceManager.Vertex;
 const Camera = m.Camera;
 const ResourceManager = m.ResourceManager;
-const Quat = m.linalg.Quat(f32);
-const Vec2 = m.linalg.Vec2(f32);
-const Vec3 = m.linalg.Vec3(f32);
-const Vec4 = m.linalg.Vec4(f32);
-const Mat4x4 = m.linalg.Mat4x4(f32);
+const Quat = m.Quat(f32);
+const Vec2 = m.Vec2(f32);
+const Vec3 = m.Vec3(f32);
+const Vec4 = m.Vec4(f32);
+const Mat4x4 = m.Mat4x4(f32);
 const Mesh = m.ResourceManager.Mesh;
 
 pub fn loop(io: std.Io, engine: *Core, window: *m.Window) !void {
@@ -48,6 +48,6 @@ pub fn main(init: std.process.Init) !void {
 
     try engine.resourcemanager.initEngineBuffers(&engine, &engine.descriptormanager);
     try engine.resourcemanager.initEmptyMesh(&engine, 256 * 256);
-    // try engine.resourcemanager.testSlugFont(&engine);
+    // try engine.resourcemanager.testUI(&engine);
     try loop(io, &engine, &window);
 }

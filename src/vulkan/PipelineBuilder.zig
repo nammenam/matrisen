@@ -2,7 +2,6 @@ const std = @import("std");
 const c = @import("c");
 const errors = @import("errors.zig");
 const checkVkPanic = errors.checkVkPanic;
-const linalg = @import("../linalg.zig");
 const Core = @import("Core.zig");
 const PipelineManager = @import("PipelineManager.zig");
 

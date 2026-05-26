@@ -70,37 +70,29 @@ public struct MeshInstance {
   public uint materialIndex; // can be arbitrarly packed
 };
 
-public struct GPUCounters {
-  public uint drawCount;
-  public uint vertexOffset;
-  public uint indexOffset;
-  public uint meshOffset;
-  public uint uiVertexOffset;
-  public uint uiElementOffset;
-  public uint pad0;
-  public uint pad1;
-};
-
-public struct SceneData {
-  public float4x4 viewproj;
-  public float4 ambient_color;
-  public float4 sun_direction;
-  public float4 sun_color;
-  public float4 viewport;
-  // addresses
+public struct DeviceBufferAddresses {
   public Transform *transforms;     // written by gpu (can be written by cpu)
   public Transform *cpu_transforms; // written by cpu only
   public MeshInstance *meshes;      // written by cpu (and gpu?)
   public UIInstance *uiobjects;     // written by cpu (and gpu?)
-  // can add more objecttypes here
 #if USE_MESH_SHADING
   public VkDrawMeshTasksIndirectCommandEXT *indirectCommands;
 #else
   public VkDrawIndirectCommand *indirectCommands;
 #endif
-  public GPUCounters *counters; // written to by cpu (cleared) and gpu
+  public uint *drawcount; // written to by cpu (cleared) and gpu
   public uint *drawMap;   // shader to shader cpu not concerned
-  // counts
+  public uint pad0;
+  public uint pad1;
+};
+
+public struct SceneData {
+  public DeviceBufferAddresses addresses;
+  public float4x4 viewproj;
+  public float4 ambient_color;
+  public float4 sun_direction;
+  public float4 sun_color;
+  public float4 viewport;
   public uint meshCount;   // number of meshInstance uploaded/prepared by cpu
   public uint uielemCount; // number of UIInstance uplaoded/prepared by cpu
   public uint pad0;

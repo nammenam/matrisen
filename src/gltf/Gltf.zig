@@ -1,7 +1,6 @@
 const Gltf = @This();
 
 const std = @import("std");
-const linalg = @import("linalg");
 const types = @import("types.zig");
 
 const mem = std.mem;
@@ -14,9 +13,9 @@ const assert = std.debug.assert;
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const Mat4 = linalg.Mat3x3(f32);
-const Vec3 = linalg.Vec3(f32);
-const Quat = linalg.Quat(f32);
+const Mat4x4 = @import("../math/Mat.zig").Mat4x4(f32);
+const Vec3 = @import("../math/Vec.zig").Vec3(f32);
+const Quat = @import("../math/Quat.zig").Quat(f32);
 
 pub const Scene = types.Scene;
 pub const Node = types.Node;
@@ -224,7 +223,7 @@ pub fn deinit(self: *Gltf) void {
     self.arena.child_allocator.destroy(self.arena);
 }
 
-pub fn getLocalTransform(node: Node) Mat4 {
+pub fn getLocalTransform(node: Node) Mat4x4 {
     return blk: {
         if (node.matrix) |mat4x4| {
             break :blk .{
@@ -235,7 +234,7 @@ pub fn getLocalTransform(node: Node) Mat4 {
             };
         }
 
-        break :blk linalg.recompose(
+        break :blk Mat4x4.recompose(
             node.translation,
             node.rotation,
             node.scale,
@@ -243,15 +242,15 @@ pub fn getLocalTransform(node: Node) Mat4 {
     };
 }
 
-pub fn getGlobalTransform(data: *const Data, node: Node) Mat4 {
+pub fn getGlobalTransform(data: *const Data, node: Node) Mat4x4 {
     var parent_index = node.parent;
-    var node_transform: Mat4 = getLocalTransform(node);
+    var node_transform: Mat4x4 = getLocalTransform(node);
 
     while (parent_index != null) {
         const parent = data.nodes[parent_index.?];
         const parent_transform = getLocalTransform(parent);
 
-        node_transform = linalg.mul(parent_transform, node_transform);
+        node_transform = Mat4x4.mul(parent_transform, node_transform);
         parent_index = parent.parent;
     }
 

@@ -200,7 +200,7 @@ void uiMesh(uint workgroupID : SV_GroupID, uint localID : SV_GroupIndex,
 
     if (workgroupID >= scene.uielemCount) return;
 
-    UIInstance instance = scene.uiobjects[workgroupID];
+    UIInstance instance = scene.addresses.uiobjects[workgroupID];
     UIElement *ui = instance.UIBuffer;
     uint type = instance.type;
 
@@ -267,7 +267,7 @@ void uiMesh(uint workgroupID : SV_GroupID, uint localID : SV_GroupIndex,
 // ==========================================
 [shader("fragment")]
 float4 uiFragment(UIVaryings in) : SV_Target {
-    UIInstance instance = scene.uiobjects[in.elementIndex];
+    UIInstance instance = scene.addresses.uiobjects[in.elementIndex];
     UIElement *ui = instance.UIBuffer;
 
     // Default to discard unless we find a curve we are close to
@@ -304,7 +304,7 @@ float4 uiFragment(UIVaryings in) : SV_Target {
 //     float ycov = 0.0, ywgt = 0.0;
 
 //     // 1. Fetch the exact UI instance and element
-//     UIInstance instance = scene.uiobjects[in.elementIndex];
+//     UIInstance instance = scene.addresses.uiobjects[in.elementIndex];
 //     UIElement *ui = instance.UIBuffer;
 
 //     // 2. Loop through the vertices

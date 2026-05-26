@@ -117,8 +117,8 @@ void terrainMain(uint3 threadId: SV_DispatchThreadID) {
   v.uv_x = uv.x;
   v.uv_y = uv.y;
   v.color = float4(col, 1.0);
-
-  Mesh* mesh = scene.meshes[0].meshBuffer;
+  return;
+  Mesh* mesh = scene.addresses.meshes[0].meshBuffer;
   mesh.vertexBuffer[vertIndex] = v;
   // Set the precise index count for a GRID_SIZE x GRID_SIZE mesh
   if (x == 0 && y == 0) {

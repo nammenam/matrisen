@@ -1,25 +1,28 @@
 const std = @import("std");
 
 pub const BumpAllocator = struct {
-    offset: u32 = 0,
-    capacity: u32,
+    start: u32,
+    end: u32,
+    current: u32,
 
-    pub fn init(capacity: u32) BumpAllocator {
+    pub fn init(start: u32, capacity: u32) BumpAllocator {
         return .{
-            .capacity = capacity,
+            .start = start,
+            .end = start + capacity,
+            .current = start,
         };
     }
 
     pub fn allocate(self: *BumpAllocator, size: u32) !u32 {
-        if (self.offset + size > self.capacity) {
+        if (self.current + size > self.end) {
             return error.OutOfMemory;
         }
-        const current = self.offset;
-        self.offset += size;
-        return current;
+        const allocated = self.current;
+        self.current += size;
+        return allocated;
     }
 
     pub fn reset(self: *BumpAllocator) void {
-        self.offset = 0;
+        self.current = self.start;
     }
 };

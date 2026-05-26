@@ -1,50 +1,35 @@
-// TODO this is verry brittle and very prone to bugs need to compartmentalize put memory sensitive
-// code into functions write correct once
-//
-// TODO clean up make more user firendly spit into multiple files, hard to keep track of variables
-// that span multiple functions and lifetime (the self. variables)
-// the buffers and bumps can be put into a struct that has the buffer, addr, and count
-// only store the count and convert to bytes when uploading only
-
-// TODO Need to find out if gpu needs acces to the bump if it is going to write and produce objects
-// eg. create a mesh with size unkown to cpu, (this probably needs gpu - cpu sync?)
-// or alternativly have two separate buffers, one that gpu writes to and bumps and one that
-// cpu writes to and bumps, the gpu can read both, we also need to create compote shaders
-// that generate persistent meshes and save to vram not only meshshaders that dont save to vram
-
-// TODO We have two indirections one lookup for the instance
-// and one lookup for mesh/uibuffer is it better to have flatter structure with one lookup?
-// can we maybe store indices out of bounds if we pack data in the right order? or is that
-// too complicated, anyway the structs need to be tweaked for optimal architecture
-// in general the system needs to be fast, low memory footprint and not to complex
-
-// TODO find the right data format for UI, how many branches do we want in the shader
-// (how many ui primitives ) do we want 3D ui or only 2D, maybe use both and optimize
-// again we have to find out how many indierections we want and if we want to store
-// indices out of bounds and be clever about ordering, instead of type fields shuld we
-// create many buffers that implicitly decide the type
+// ┌───────────────┬─────────────────────────────┬────────────────────────────────┐
+// │               │ Static (Rarely changes)     │ Dynamic (Changes every frame)  │
+// ├───────────────┼─────────────────────────────┼────────────────────────────────┤
+// │ CPU Controlled│ GLTF Meshes,                │ UI Vertices, Camera Transforms,│
+// │               │ Textures uploaded from disk.│ Player Input state.            │
+// ├───────────────┼─────────────────────────────┼────────────────────────────────┤
+// │ GPU Controlled│ Procedural Terrain,         │ GPU Culling output             │
+// │               │ Baked Lightmaps,            │ (Visible instances),           │
+// │               │ Raytracing BVHs.            │ Particle Simulations.          │
+// └───────────────┴─────────────────────────────┴────────────────────────────────┘
 
 const std = @import("std");
-const linalg = @import("../linalg.zig");
 const errors = @import("errors.zig");
 const c = @import("c");
 const config = @import("config");
+const imageop = @import("imageop.zig");
 const Core = @import("Core.zig");
 const DescriptorManager = @import("DescriptorManager.zig");
 const AsyncContext = @import("AsyncContext.zig");
-const imageop = @import("imageop.zig");
+const Camera = @import("../Camera.zig");
 const Arena = @import("Arena.zig").Arena;
+const Quat = @import("../math/Quat.zig").Quat(f32);
+const DualQuat = @import("../math/Quat.zig").DualQuat(f32);
+const Vec2 = @import("../math/Vec.zig").Vec2(f32);
+const Vec3 = @import("../math/Vec.zig").Vec3(f32);
+const Vec4 = @import("../math/Vec.zig").Vec4(f32);
+const Mat2x2 = @import("../math/Mat.zig").Mat2x2(f32);
+const Mat3x3 = @import("../math/Mat.zig").Mat3x3(f32);
+const Mat4x4 = @import("../math/Mat.zig").Mat4x4(f32);
 
-const Quat = linalg.Quat(f32);
-const Vec2 = linalg.Vec2(f32);
-const Vec3 = linalg.Vec3(f32);
-const Vec4 = linalg.Vec4(f32);
-const Mat4x4 = linalg.Mat4x4(f32);
-
-// TODO merge into the new allocated buffer struct
 pub const MAX_GEOMETRY_BYTES = 64 * 1024 * 1024; // 64 MB for verts/indices
 pub const MAX_TEXTURES = 4096; // 4 KB for images
-pub const MAX_DYNAMIC_UI = 4096; // 4 KB for images
 pub const MAX_OBJECTS = 4096;
 pub const CPU_TRANSFORMS = 100;
 
@@ -52,15 +37,28 @@ pub const AllocatedBuffer = struct {
     buffer: c.VkBuffer,
     allocation: c.VmaAllocation,
     info: c.VmaAllocationInfo,
+
+    pub fn destroy(self: *@This(), gpuallocator: c.VmaAllocator) void {
+        c.vmaDestroyBuffer(gpuallocator, self.buffer, self.allocation);
+    }
 };
 
-// TODO invesigate optimized memory layout and redundant fields
 pub const AllocatedImage = struct {
     image: c.VkImage,
     allocation: c.VmaAllocation,
     view: c.VkImageView,
-    // info: c.VmaAllocationInfo,
+    info: c.VmaAllocationInfo,
     bindless_index: u32,
+
+    pub fn destroy(
+        self: *@This(),
+        gpuallocator: c.VmaAllocator,
+        device: c.VkDevice,
+        alloc_callbacks: ?*c.VkAllocationCallbacks,
+    ) void {
+        c.vkDestroyImageView(device, self.view, alloc_callbacks);
+        c.vmaDestroyImage(gpuallocator, self.image, self.allocation);
+    }
 };
 
 // ========================================================================
@@ -73,10 +71,6 @@ pub const Vertex = extern struct {
     normal: Vec3 = .zeros,
     uv_y: f32 = 0,
     color: Vec4 = .zeros,
-};
-
-pub const Transform = extern struct {
-    modelMatrix: Mat4x4,
 };
 
 pub const BoundingBox = extern struct {
@@ -108,35 +102,44 @@ pub const MeshInstance = extern struct {
 pub const UIInstance = extern struct {
     UIBuffer: u64, // *UIElement
     transformIndex: u32,
-    type: u32,
+    type: u32, // this is how we interpet the vertices
 };
 
-pub const GPUCounters = extern struct {
-    drawCount: u32,
+pub const VertexCount = extern struct {
     vertexOffset: u32,
     indexOffset: u32,
-    meshOffset: u32,
-    uiVertexOffset: u32,
-    uiElementOffset: u32,
-    pad0: u32 = 0,
-    pad1: u32 = 0,
+};
+
+pub const DrawCount = u32;
+
+pub const MeshCount = u32;
+
+pub const UICount = u32;
+
+pub const Position = Vec4;
+
+pub const Orientation = Quat;
+
+pub const Transform = DualQuat;
+
+pub const DeviceBufferAddresses = extern struct {
+    transforms: c.VkDeviceAddress,
+    cpu_transforms: c.VkDeviceAddress,
+    meshes: c.VkDeviceAddress,
+    uiobjects: c.VkDeviceAddress,
+    indirectCommands: c.VkDeviceAddress,
+    drawcount: c.VkDeviceAddress,
+    drawMap: c.VkDeviceAddress,
+    pad0: c.VkDeviceAddress = 0,
 };
 
 pub const SceneData = extern struct {
-    viewproj: Mat4x4,
+    addresses: DeviceBufferAddresses,
+    viewproj: Mat4x4, // use DualQuat??
     ambient_color: Vec4,
     sun_direction: Vec4,
     sun_color: Vec4,
     viewport: Vec4,
-    // addresses
-    transforms: u64,
-    cpu_transforms: u64,
-    meshes: u64, // *MeshInstance
-    uiobjects: u64, // *UIInstance
-    indirectCommands: u64, // *indirecbuffer
-    counters: u64, // *GPUCounters
-    drawMap: u64, // *uint
-    // counts
     meshcount: u32,
     uielemcount: u32,
     pad0: u32 = 0,
@@ -155,26 +158,32 @@ alloc_callbacks: ?*c.VkAllocationCallbacks,
 
 global_sampler: c.VkSampler = undefined,
 
-// --- The 4 Core Arenas ---
+// --- Core arenas ---
 static_cpu_arena: Arena = undefined,
 dynamic_cpu_arena: Arena = undefined,
 static_gpu_arena: Arena = undefined,
 dynamic_gpu_arena: Arena = undefined,
 readback_arena: Arena = undefined,
 
-// gpu large arenas
+// --- Sub-Allocated Arenas ---
+// Sub-allocated from static_gpu_arena (Static meshes & UI definitions)
 vertex_arena: Arena = undefined,
-dynamicvertex_arena: Arena = undefined,
 index_arena: Arena = undefined,
-transform_arena: Arena = undefined,
-cputransform_arena: Arena = undefined,
 mesh_arena: Arena = undefined,
+ui_arena: Arena = undefined,
+
+// Sub-allocated from dynamic_gpu_arena (Double-buffered, GPU-computed objects)
 meshinstance_arena: Arena = undefined,
 uiinstance_arena: Arena = undefined,
+transform_arena: Arena = undefined,
 indirect_arena: Arena = undefined,
 count_arena: Arena = undefined,
+draw_count: Arena = undefined,
 drawmap_arena: Arena = undefined,
-ui_arena: Arena = undefined,
+
+// Sub-allocated from dynamic_cpu_arena (Double-buffered, Host-visible)
+dynamicvertex_arena: Arena = undefined,
+cputransform_arena: Arena = undefined,
 
 // Uniforms and binded buffers
 scenebuffers: [Core.multibuffering]AllocatedBuffer = @splat(undefined),
@@ -197,18 +206,15 @@ pub fn flush(self: *Self, buffer: AllocatedBuffer, offset: c.VkDeviceSize, size:
     errors.checkVkPanic(c.vmaFlushAllocation(self.gpuallocator, buffer.allocation, offset, size));
 }
 
-pub fn destroy(self: *Self, buffer: AllocatedBuffer) void {
-    c.vmaDestroyBuffer(self.gpuallocator, buffer.buffer, buffer.allocation);
-}
-
 pub fn destroyBuffers(self: *Self) void {
-    for (self.scenebuffers) |buf| self.destroy(buf);
+    for (&self.scenebuffers) |*buf| buf.destroy(self.gpuallocator);
     c.vkDestroySampler(self.device, self.global_sampler, self.alloc_callbacks);
 
-    if (self.static_cpu_arena.buffer.buffer != null) self.destroy(self.static_cpu_arena.buffer);
-    if (self.dynamic_cpu_arena.buffer.buffer != null) self.destroy(self.dynamic_cpu_arena.buffer);
-    if (self.static_gpu_arena.buffer.buffer != null) self.destroy(self.static_gpu_arena.buffer);
-    if (self.dynamic_gpu_arena.buffer.buffer != null) self.destroy(self.dynamic_gpu_arena.buffer);
+    if (self.static_cpu_arena.buffer.buffer != null) self.static_cpu_arena.buffer.destroy(self.gpuallocator);
+    if (self.dynamic_cpu_arena.buffer.buffer != null) self.dynamic_cpu_arena.buffer.destroy(self.gpuallocator);
+    if (self.static_gpu_arena.buffer.buffer != null) self.static_gpu_arena.buffer.destroy(self.gpuallocator);
+    if (self.dynamic_gpu_arena.buffer.buffer != null) self.dynamic_gpu_arena.buffer.destroy(self.gpuallocator);
+    if (self.readback_arena.buffer.buffer != null) self.readback_arena.buffer.destroy(self.gpuallocator);
 }
 
 // Initializes the memory arenas with MULTI-BUFFERING sizing
@@ -216,14 +222,15 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     const mb = Core.multibuffering;
 
     // ====================================================================
-    // The 4 Core Arenas (Architecture Upgrade)
+    // Core arenas
     // ====================================================================
 
     // 1. Static CPU Arena (CPU to GPU, Write once)
     const static_cpu_buf = self.createBuffer(
         128 * 1024 * 1024, // 128 MB
-        c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        c.VMA_MEMORY_USAGE_CPU_ONLY,
+        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+            c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
     self.static_cpu_arena = Arena.init(static_cpu_buf, 0, 0, 128 * 1024 * 1024);
 
@@ -233,60 +240,71 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_CPU_TO_GPU,
     );
-    self.dynamic_cpu_arena = Arena.init(dynamic_cpu_buf, 0, self.getBufferAddress(dynamic_cpu_buf), 64 * 1024 * 1024);
+    {
+        const addr = self.getBufferAddress(dynamic_cpu_buf);
+        self.dynamic_cpu_arena = Arena.init(dynamic_cpu_buf, addr, 0, 64 * 1024 * 1024);
+    }
 
     // 3. Static GPU Arena (GPU Only, procedural static meshes, loaded once)
     const static_gpu_buf = self.createBuffer(
         256 * 1024 * 1024, // 256 MB
-        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+            c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
-    self.static_gpu_arena = Arena.init(static_gpu_buf, 0, self.getBufferAddress(static_gpu_buf), 256 * 1024 * 1024);
+    {
+        const addr = self.getBufferAddress(static_gpu_buf);
+        self.static_gpu_arena = Arena.init(static_gpu_buf, addr, 0, 256 * 1024 * 1024);
+    }
 
     // 4. Dynamic GPU Arena (GPU Only, cleared every frame for compute output)
     const dynamic_gpu_buf = self.createBuffer(
         128 * 1024 * 1024, // 128 MB
-        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+            c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
-    self.dynamic_gpu_arena = Arena.init(dynamic_gpu_buf, 0, self.getBufferAddress(dynamic_gpu_buf), 128 * 1024 * 1024);
+    {
+        const addr = self.getBufferAddress(dynamic_gpu_buf);
+        self.dynamic_gpu_arena = Arena.init(dynamic_gpu_buf, addr, 0, 128 * 1024 * 1024);
+    }
 
     // 5. Readback Arena (GPU to CPU, for retrieving data)
     const readback_buf = self.createBuffer(
         16 * 1024 * 1024, // 16 MB
-        c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         c.VMA_MEMORY_USAGE_GPU_TO_CPU,
     );
+    // does not need device buffer address
     self.readback_arena = Arena.init(readback_buf, 0, 0, 16 * 1024 * 1024);
 
     // ====================================================================
     // Static arenas (change rarely) mega buffers GPU Only
     // ====================================================================
 
-    // Giant Geometry Buffers
     self.vertex_arena = try self.static_gpu_arena.subAllocateArena(MAX_GEOMETRY_BYTES);
     self.index_arena = try self.static_gpu_arena.subAllocateArena(MAX_GEOMETRY_BYTES);
-    // list of mesh objects
     self.mesh_arena = try self.static_gpu_arena.subAllocateArena(@sizeOf(Mesh) * MAX_OBJECTS);
-    // list of ui objects
     self.ui_arena = try self.static_gpu_arena.subAllocateArena(@sizeOf(UIElement) * MAX_OBJECTS);
 
     // ====================================================================
     // Dynamic arenas (double buffered) GPU Only
     // ====================================================================
 
-    // list of mesh instances
     self.meshinstance_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(MeshInstance) * MAX_OBJECTS * mb);
-    // list of ui instances
     self.uiinstance_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(UIInstance) * MAX_OBJECTS * mb);
-    // 3. Compute Buffers
     self.transform_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(Transform) * MAX_OBJECTS * mb);
     if (config.meshshading) {
-        self.indirect_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(c.VkDrawMeshTasksIndirectCommandEXT) * MAX_OBJECTS * mb);
+        self.indirect_arena = try self.dynamic_gpu_arena.subAllocateArena(
+            @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT) * MAX_OBJECTS * mb,
+        );
     } else {
-        self.indirect_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(c.VkDrawIndirectCommand) * MAX_OBJECTS * mb);
+        self.indirect_arena = try self.dynamic_gpu_arena.subAllocateArena(
+            @sizeOf(c.VkDrawIndirectCommand) * MAX_OBJECTS * mb,
+        );
     }
-    self.count_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(GPUCounters) * mb);
+    self.count_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(VertexCount) * mb);
+    self.draw_count = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(DrawCount) * mb);
     self.drawmap_arena = try self.dynamic_gpu_arena.subAllocateArena(@sizeOf(u32) * MAX_OBJECTS * mb);
 
     // ====================================================================
@@ -296,9 +314,9 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     self.dynamicvertex_arena = try self.dynamic_cpu_arena.subAllocateArena(@sizeOf(Vertex) * MAX_OBJECTS * mb);
     self.cputransform_arena = try self.dynamic_cpu_arena.subAllocateArena(@sizeOf(Transform) * CPU_TRANSFORMS * mb);
 
-    // 4. Uniform Buffers (Already Double buffered)
-    // If you are wondering where the write for the other set (bindless texture is)
-    // The other set gets written in uploadTexture //TODO is that right way to do it
+    // ====================================================================
+    // Uniforms
+    // ====================================================================
     for (&self.scenebuffers, 0..) |*buf, i| {
         buf.* = self.createBuffer(
             @sizeOf(SceneData),
@@ -331,7 +349,7 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         self.alloc_callbacks,
         &self.global_sampler,
     ));
-
+    // fill pointers with 0 so we dont crash the gpu
     self.initEmptyMesh(core, 0) catch @panic("Failed to init empty mesh");
     self.initEmptyUI(core, 0) catch @panic("Failed to init empty UI");
 }
@@ -345,18 +363,11 @@ pub fn getUIInstanceCount(self: *const Self) u32 {
 }
 
 // Writes the SceneData with dynamic offsets based on the frame
-pub fn updateScene(
-    self: *Self,
-    frame_index: u8,
-    aspect_ratio: f32,
-    camerarot: Quat,
-    camerapos: Vec3,
-    time: f32,
-) void {
+pub fn updateScene(self: *Self, frame_index: u8, aspect_ratio: f32, camera: Camera, time: f32) void {
     var ptr = @as(*SceneData, @ptrCast(@alignCast(self.scenebuffers[frame_index].info.pMappedData.?)));
 
-    const view = camerarot.view(camerapos);
-    var proj = Mat4x4.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.1, 1000.0);
+    const view = camera.view();
+    var proj = Camera.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.1, 1000.0);
     ptr.viewproj = proj.mul(view);
 
     ptr.ambient_color = Vec4.new(1.0, 0.5, 0.0, 1.0);
@@ -365,32 +376,31 @@ pub fn updateScene(
     ptr.viewport = Vec4.new(2000, 1200, 0, 0);
 
     // Calculate BDA base addresses
-    const b_trans = self.transform_arena.device_address;
-    const b_meshes = self.meshinstance_arena.device_address;
-    const b_indir = self.indirect_arena.device_address;
-    const b_count = self.count_arena.device_address;
-    const b_cpu_trans = self.cputransform_arena.device_address;
-    const b_drawmap = self.drawmap_arena.device_address;
-    const b_ui = self.uiinstance_arena.device_address;
+    const b_trans = self.transform_arena.getAddress(self.transform_arena.allocator.start);
+    const b_meshes = self.meshinstance_arena.getAddress(self.meshinstance_arena.allocator.start);
+    const b_indir = self.indirect_arena.getAddress(self.indirect_arena.allocator.start);
+    const b_cpu_trans = self.cputransform_arena.getAddress(self.cputransform_arena.allocator.start);
+    const b_drawmap = self.drawmap_arena.getAddress(self.drawmap_arena.allocator.start);
+    const b_ui = self.uiinstance_arena.getAddress(self.uiinstance_arena.allocator.start);
 
     // Calculate byte offsets for this specific frame
     const frame_u64 = @as(u64, frame_index);
     _ = time;
 
     // Inject the offset pointers directly into the shader!
-    ptr.transforms = b_trans + (frame_u64 * MAX_OBJECTS * @sizeOf(Transform));
-    ptr.cpu_transforms = b_cpu_trans + (frame_u64 * CPU_TRANSFORMS * @sizeOf(Transform));
-    ptr.counters = b_count + (frame_u64 * @sizeOf(GPUCounters));
-    ptr.drawMap = b_drawmap + (frame_u64 * MAX_OBJECTS * @sizeOf(u32));
-    ptr.meshes = b_meshes + (frame_u64 * MAX_OBJECTS * @sizeOf(MeshInstance));
-    ptr.uiobjects = b_ui + (frame_u64 * MAX_OBJECTS * @sizeOf(UIInstance));
-    ptr.meshcount = self.meshinstance_arena.allocator.offset / @sizeOf(MeshInstance);
-    ptr.uielemcount = self.uiinstance_arena.allocator.offset / @sizeOf(UIInstance);
+    ptr.addresses.transforms = b_trans + (frame_u64 * MAX_OBJECTS * @sizeOf(Transform));
+    ptr.addresses.cpu_transforms = b_cpu_trans + (frame_u64 * CPU_TRANSFORMS * @sizeOf(Transform));
+    ptr.addresses.drawcount = self.draw_count.getAddress(self.draw_count.allocator.start) + (frame_u64 * @sizeOf(DrawCount));
+    ptr.addresses.drawMap = b_drawmap + (frame_u64 * MAX_OBJECTS * @sizeOf(u32));
+    ptr.addresses.meshes = b_meshes + (frame_u64 * MAX_OBJECTS * @sizeOf(MeshInstance));
+    ptr.addresses.uiobjects = b_ui + (frame_u64 * MAX_OBJECTS * @sizeOf(UIInstance));
+    ptr.meshcount = @intCast((self.meshinstance_arena.allocator.current - self.meshinstance_arena.allocator.start) / @sizeOf(MeshInstance));
+    ptr.uielemcount = @intCast((self.uiinstance_arena.allocator.current - self.uiinstance_arena.allocator.start) / @sizeOf(UIInstance));
     if (config.meshshading) {
-        ptr.indirectCommands = b_indir +
+        ptr.addresses.indirectCommands = b_indir +
             (frame_u64 * MAX_OBJECTS * @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT));
     } else {
-        ptr.indirectCommands = b_indir +
+        ptr.addresses.indirectCommands = b_indir +
             (frame_u64 * MAX_OBJECTS * @sizeOf(c.VkDrawIndirectCommand));
     }
 }
@@ -477,22 +487,23 @@ pub fn getBufferAddress(self: *Self, buffer: AllocatedBuffer) c.VkDeviceAddress 
     return adr;
 }
 
-pub fn requestReadback(self: *Self, cmd: c.VkCommandBuffer, src_buffer: c.VkBuffer, size: c.VkDeviceSize, src_offset: c.VkDeviceSize) !u32 {
+pub fn requestReadback(
+    self: *Self,
+    cmd: c.VkCommandBuffer,
+    src_buffer: c.VkBuffer,
+    size: c.VkDeviceSize,
+    src_offset: c.VkDeviceSize,
+) !u32 {
     const dst_offset = try self.readback_arena.allocate(@intCast(size));
 
     const copy_region = c.VkBufferCopy{
         .srcOffset = src_offset,
-        .dstOffset = self.readback_arena.base_offset + dst_offset,
+        .dstOffset = dst_offset,
         .size = size,
     };
 
     c.vkCmdCopyBuffer(cmd, src_buffer, self.readback_arena.buffer.buffer, 1, &copy_region);
     return dst_offset;
-}
-
-pub fn deinitImage(self: *Self, image: AllocatedImage) void {
-    c.vmaDestroyImage(self.gpuallocator, image.image, image.allocation);
-    c.vkDestroyImageView(self.device, image.view, self.alloc_callbacks);
 }
 
 pub fn createImage(
@@ -569,7 +580,6 @@ pub fn createView(device: c.VkDevice, image: c.VkImage, format: c.VkFormat, mipl
     return image_view;
 }
 
-// TODO move to separate file
 pub fn createDrawImage(
     self: *Self,
     extent: c.VkExtent2D,
@@ -626,7 +636,6 @@ pub fn createDrawImage(
     return drawimage;
 }
 
-// TODO move to separate file
 pub fn createRenderImage(
     self: *Self,
     extent: c.VkExtent2D,
@@ -684,7 +693,6 @@ pub fn createRenderImage(
     return renderimage;
 }
 
-// TODO move into separate file
 pub fn createDepthImage(
     self: *Self,
     extent: c.VkExtent3D,
@@ -756,8 +764,8 @@ pub fn uploadMesh(
     const current_i_offset = try self.index_arena.allocate(@intCast(i_size));
     const current_mesh_offset = try self.mesh_arena.allocate(@sizeOf(Mesh));
 
-    self.upload(&core.asynccontext, v_bytes, self.vertex_arena.buffer, self.vertex_arena.base_offset + current_v_offset);
-    self.upload(&core.asynccontext, i_bytes, self.index_arena.buffer, self.index_arena.base_offset + current_i_offset);
+    self.upload(&core.asynccontext, v_bytes, self.vertex_arena.buffer, current_v_offset);
+    self.upload(&core.asynccontext, i_bytes, self.index_arena.buffer, current_i_offset);
 
     const mesh = Mesh{
         .vertexBuffer = self.vertex_arena.getAddress(current_v_offset),
@@ -770,7 +778,7 @@ pub fn uploadMesh(
         &core.asynccontext,
         std.mem.asBytes(&mesh),
         self.mesh_arena.buffer,
-        self.mesh_arena.base_offset + current_mesh_offset,
+        current_mesh_offset,
     );
 }
 
@@ -792,7 +800,7 @@ pub fn uploadTexture(
         c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         c.VMA_MEMORY_USAGE_CPU_ONLY, // Changed from CPU_TO_GPU
     );
-    defer self.destroy(staging);
+    defer staging.destroy(self.gpuallocator);
 
     const mapped_data = @as([*]u8, @ptrCast(staging.info.pMappedData.?));
     @memcpy(mapped_data[0..data.len], data);
@@ -858,7 +866,6 @@ pub fn uploadTexture(
     return new_image;
 }
 
-// TODO move into separate file
 pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) !void {
     const vertex_count = size;
     const index_count = size * 6;
@@ -867,7 +874,7 @@ pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) !void {
 
     const current_v_offset = try self.vertex_arena.allocate(@intCast(v_size));
     const current_i_offset = try self.index_arena.allocate(@intCast(i_size));
-    
+
     var current_mesh_offset: u32 = 0;
     if (size != 0) {
         current_mesh_offset = try self.mesh_arena.allocate(@sizeOf(Mesh));
@@ -884,7 +891,7 @@ pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) !void {
         &core.asynccontext,
         std.mem.asBytes(&mesh),
         self.mesh_arena.buffer,
-        self.mesh_arena.base_offset + current_mesh_offset,
+        current_mesh_offset,
     );
 
     const instance = MeshInstance{
@@ -893,19 +900,12 @@ pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) !void {
         .materialIndex = 0, // Material lives here!
     };
 
+    const current_instance_offset = try self.meshinstance_arena.allocate(@sizeOf(MeshInstance));
+
     for (0..Core.multibuffering) |i| {
         const frame_base_offset = i * MAX_OBJECTS * @sizeOf(MeshInstance);
-        const current_instance_offset = try self.meshinstance_arena.allocate(@sizeOf(MeshInstance));
-        // Wait, meshinstance_arena already accounts for multibuffering sequentially
-        // Actually, no, if we allocate here sequentially, it will put instances consecutively, not strided.
-        // Let's just stride manually for now if that's what was done.
-        
-        self.upload(
-            &core.asynccontext,
-            std.mem.asBytes(&instance),
-            self.meshinstance_arena.buffer,
-            self.meshinstance_arena.base_offset + frame_base_offset + current_instance_offset / Core.multibuffering,
-        );
+        const offset = current_instance_offset + frame_base_offset;
+        self.upload(&core.asynccontext, std.mem.asBytes(&instance), self.meshinstance_arena.buffer, offset);
     }
 }
 
@@ -929,7 +929,7 @@ pub fn initEmptyUI(self: *Self, core: *Core, size: usize) !void {
         &core.asynccontext,
         std.mem.asBytes(&mesh),
         self.ui_arena.buffer, // The pool of geometry structs
-        self.ui_arena.base_offset + current_ui_offset,
+        current_ui_offset,
     );
 
     const instance = UIInstance{
@@ -939,7 +939,6 @@ pub fn initEmptyUI(self: *Self, core: *Core, size: usize) !void {
     };
 
     const current_instance_offset = try self.uiinstance_arena.allocate(@sizeOf(UIInstance));
-    const normalized_offset = current_instance_offset;
 
     for (0..Core.multibuffering) |i| {
         const frame_base_offset = i * MAX_OBJECTS * @sizeOf(UIInstance);
@@ -947,27 +946,21 @@ pub fn initEmptyUI(self: *Self, core: *Core, size: usize) !void {
             &core.asynccontext,
             std.mem.asBytes(&instance),
             self.uiinstance_arena.buffer,
-            self.uiinstance_arena.base_offset + frame_base_offset + normalized_offset,
+            current_instance_offset + frame_base_offset,
         );
     }
 }
 
-// TODO move into separate file
-pub fn testSlugFont(self: *Self, core: *Core) !void {
-    // A simple letter "A" made of quadratic bezier curves
-    // P0, P1, P2 for each segment
+pub fn testUI(self: *Self, core: *Core) !void {
     const letter_A_curves = [_]Vertex{
-        // Left leg
         .{ .position = .{ .x = 100, .y = 100, .z = 0 } },
         .{ .position = .{ .x = 200, .y = 300, .z = 0 } },
         .{ .position = .{ .x = 300, .y = 500, .z = 0 } },
 
-        // Right leg
         .{ .position = .{ .x = 300, .y = 500, .z = 0 } },
         .{ .position = .{ .x = 400, .y = 300, .z = 0 } },
         .{ .position = .{ .x = 500, .y = 100, .z = 0 } },
 
-        // Crossbar
         .{ .position = .{ .x = 200, .y = 300, .z = 0 } },
         .{ .position = .{ .x = 300, .y = 300, .z = 0 } },
         .{ .position = .{ .x = 400, .y = 300, .z = 0 } },
@@ -982,19 +975,16 @@ pub fn testSlugFont(self: *Self, core: *Core) !void {
     const current_v_offset = try self.vertex_arena.allocate(@intCast(v_size));
     const current_ui_offset = try self.ui_arena.allocate(@sizeOf(UIElement));
 
-    // Upload via Staging Buffer
-    self.upload(&core.asynccontext, curve_bytes, self.vertex_arena.buffer, self.vertex_arena.base_offset + current_v_offset);
+    self.upload(&core.asynccontext, curve_bytes, self.vertex_arena.buffer, current_v_offset);
 
-    // 3. Build the ui using the PRE-BUMP offsets
     const mesh = UIElement{
         .vertexBuffer = self.vertex_arena.getAddress(current_v_offset),
         .vertexCount = vertex_count,
         .pad = 0,
     };
 
-    self.upload(&core.asynccontext, std.mem.asBytes(&mesh), self.ui_arena.buffer, self.ui_arena.base_offset + current_ui_offset);
+    self.upload(&core.asynccontext, std.mem.asBytes(&mesh), self.ui_arena.buffer, current_ui_offset);
 
-    // 5. Build the Instance pointing to the PRE-BUMP mesh offset
     const instance = UIInstance{
         .UIBuffer = self.ui_arena.getAddress(current_ui_offset),
         .transformIndex = 0,
@@ -1002,7 +992,6 @@ pub fn testSlugFont(self: *Self, core: *Core) !void {
     };
 
     const current_instance_offset = try self.uiinstance_arena.allocate(@sizeOf(UIInstance));
-    const normalized_offset = current_instance_offset;
 
     for (0..Core.multibuffering) |i| {
         const frame_base_offset = i * MAX_OBJECTS * @sizeOf(UIInstance);
@@ -1010,7 +999,12 @@ pub fn testSlugFont(self: *Self, core: *Core) !void {
             &core.asynccontext,
             std.mem.asBytes(&instance),
             self.uiinstance_arena.buffer,
-            self.uiinstance_arena.base_offset + frame_base_offset + normalized_offset,
+            current_instance_offset + frame_base_offset,
+        );
+    }
+}
+           self.uiinstance_arena.buffer,
+            current_instance_offset + frame_base_offset,
         );
     }
 }

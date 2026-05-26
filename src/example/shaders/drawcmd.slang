@@ -9,7 +9,7 @@ void drawcmdMain(uint3 threadId: SV_DispatchThreadID) {
     return;
   }
 
-  Mesh *mesh_addr = scene.meshes[objIndex].meshBuffer;
+  Mesh *mesh_addr = scene.addresses.meshes[objIndex].meshBuffer;
   uint index_count = mesh_addr.indexCount;
   if (index_count == 0) {
     return;
@@ -17,23 +17,23 @@ void drawcmdMain(uint3 threadId: SV_DispatchThreadID) {
 
   // TODO: Add actual frustum culling here
   uint drawIndex;
-  InterlockedAdd(scene.counters.drawCount, 1, drawIndex);
+  InterlockedAdd(scene.addresses.drawcount[0], 1, drawIndex);
   // --- CONDITIONAL COMPILE BLOCK ---
 #if USE_MESH_SHADING
-  scene.drawMap[drawIndex] = objIndex;
+  scene.addresses.drawMap[drawIndex] = objIndex;
 
   uint totalTriangles = index_count / 3;
   uint groupCountX = (totalTriangles + 31) / 32;
 
-  scene.indirectCommands[drawIndex].groupCountX = groupCountX;
-  scene.indirectCommands[drawIndex].groupCountY = 1;
-  scene.indirectCommands[drawIndex].groupCountZ = 1;
+  scene.addresses.indirectCommands[drawIndex].groupCountX = groupCountX;
+  scene.addresses.indirectCommands[drawIndex].groupCountY = 1;
+  scene.addresses.indirectCommands[drawIndex].groupCountZ = 1;
 #else
   // Classic Vertex Pipeline Indirect Command
-  scene.indirectCommands[drawIndex].vertexCount = index_count;
-  scene.indirectCommands[drawIndex].instanceCount = 1;
-  scene.indirectCommands[drawIndex].firstVertex = 0;
-  scene.indirectCommands[drawIndex].firstInstance = objIndex;
+  scene.addresses.indirectCommands[drawIndex].vertexCount = index_count;
+  scene.addresses.indirectCommands[drawIndex].instanceCount = 1;
+  scene.addresses.indirectCommands[drawIndex].firstVertex = 0;
+  scene.addresses.indirectCommands[drawIndex].firstInstance = objIndex;
 #endif
   // ---------------------------------
 }

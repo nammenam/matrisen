@@ -196,7 +196,7 @@ void EvaluateCurve(float2 P0, float2 P1, float2 P2, float2 renderCoord,
 
 [shader("fragment")]
 float4 slugFragment(SlugVaryings input) : SV_Target {
-    UIElement* ui = scene.uiobjects.UIBuffer; // Assuming only 1 UI object for now
+    UIElement* ui = scene.addresses.uiobjects.UIBuffer; // Assuming only 1 UI object for now
 
     float xcov = 0.0, xwgt = 0.0;
     float ycov = 0.0, ywgt = 0.0;
