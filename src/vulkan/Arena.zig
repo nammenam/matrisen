@@ -4,6 +4,9 @@ const ResourceManager = @import("ResourceManager.zig");
 const AllocatedBuffer = ResourceManager.AllocatedBuffer;
 const BumpAllocator = @import("BumpAllocator.zig").BumpAllocator;
 
+// TODO add typed handles for u32 and stuff Meshidx = enum(u32) { _ } or Meshidx = u32
+// to make compiler handles misuse of indexes
+
 /// An Arena is a sub-range of a GPU buffer.
 ///
 /// Two flavours:

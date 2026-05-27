@@ -377,7 +377,7 @@ pub fn updateScene(self: *Self, frame_index: u8, aspect_ratio: f32, camera: Came
     var proj = Camera.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.1, 1000.0);
     ptr.viewproj = proj.mul(view);
 
-    ptr.ambient_color = Vec4.new(1.0, 0.5, 0.0, 1.0);
+    ptr.ambient_color = Vec4.new(1.0, 1.0, 1.0, 1.0);
     ptr.sun_color = Vec4.new(1.0, 1.0, 0.9, 1.0);
     ptr.sun_direction = Vec3.new(0.2, -0.5, 1.0).normalized().toVec4(0.0);
     ptr.viewport = Vec4.new(2000, 1200, 0, 0);

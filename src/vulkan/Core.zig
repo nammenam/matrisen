@@ -203,6 +203,7 @@ fn setRenderScale(inputextent: c.VkExtent2D, scale: f32) c.VkExtent2D {
     return outextent;
 }
 
+// TODO move the buffer stuff to resourcemanager
 pub fn nextFrame(self: *Self, window: *Window) void {
     var frame = &self.framecontexts[self.currentframe];
     const cmd = frame.command_buffer;

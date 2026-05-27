@@ -54,24 +54,24 @@ pub fn orbit(self: *Self, window: *Window) void {
         self.orientation.rotatePitch(-window.state.mouse_y / 150);
         self.orientation.rotateWorldZ(-window.state.mouse_x / 150);
     }
-    const local_offset = Vec3{ .x = 0.0, .y = 0.0, .z = self.distance };
+    const local_offset = Vec3{ .x = 0.0, .y = 0.0, .z = -self.distance };
     self.position = self.orientation.rotateVec3(local_offset).add(self.pivot);
 }
 
 /// The result matrix maps a Right-Handed, Y-Up view space (looking down -Z)
 /// to a Zero-to-One clipping space.
-pub fn perspective(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
-    const f = 1.0 / @tan(fovy_rad / 2.0);
-    const a = f / aspect;
-    const b = -far / (far - near); // Maps -Z to [0, 1]
-    const c = -(far * near) / (far - near);
-    return .new(
-        .new(a, 0, 0, 0),
-        .new(0, f, 0, 0),
-        .new(0, 0, b, c),
-        .new(0, 0, -1, 0), // w = -z
-    );
-}
+// pub fn perspective(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
+//     const f = 1.0 / @tan(fovy_rad / 2.0);
+//     const a = f / aspect;
+//     const b = -far / (far - near); // Maps -Z to [0, 1]
+//     const c = -(far * near) / (far - near);
+//     return .new(
+//         .new(a, 0, 0, 0),
+//         .new(0, f, 0, 0),
+//         .new(0, 0, b, c),
+//         .new(0, 0, -1, 0), // w = -z
+//     );
+// }
 
 /// The result matrix maps a Right-Handed, Y-Up view space (looking down -Z)
 /// to a Zero-to-One clipping space.
@@ -88,18 +88,38 @@ pub fn orthographic(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
     );
 }
 
-pub fn view(self: Self) Mat4x4 {
-    const rotation = self.orientation.inverse().toMat4x4();
+// pub fn view(self: Self) Mat4x4 {
+//     const rotation = self.orientation.inverse().toMat4x4();
+//     const translation = Mat4x4.translation(.{
+//         .x = -self.position.x,
+//         .y = -self.position.y,
+//         .z = -self.position.z,
+//     });
+//     const wv = rotation.mul(translation);
+//     return .new(
+//         .new(wv.x.x, wv.x.z, -wv.x.y, wv.x.w),
+//         .new(wv.y.x, wv.y.z, -wv.y.y, wv.y.w),
+//         .new(wv.z.x, wv.z.z, -wv.z.y, wv.z.w),
+//         .new(wv.w.x, wv.w.z, -wv.w.y, wv.w.w),
+//     );
+// }
+
+pub fn view(cam: Self) Mat4x4 {
+    const rotation = cam.orientation.inverse().toMat4x4();
     const translation = Mat4x4.translation(.{
-        .x = -self.position.x,
-        .y = -self.position.y,
-        .z = -self.position.z,
+        .x = -cam.position.x,
+        .y = -cam.position.y,
+        .z = -cam.position.z,
     });
-    const wv = rotation.mul(translation);
-    return .new(
-        .new(wv.x.x, wv.x.z, -wv.x.y, wv.x.w),
-        .new(wv.y.x, wv.y.z, -wv.y.y, wv.y.w),
-        .new(wv.z.x, wv.z.z, -wv.z.y, wv.z.w),
-        .new(wv.w.x, wv.w.z, -wv.w.y, wv.w.w),
-    );
+    return rotation.mul(translation);
+}
+
+pub fn perspective(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
+    const f = 1.0 / @tan(fovy_rad / 2.0);
+    return .{
+        .x = .{ .x = f / aspect, .y = 0, .z = 0, .w = 0 },
+        .y = .{ .x = 0, .y = f, .z = 0, .w = 0 },
+        .z = .{ .x = 0, .y = 0, .z = far / (far - near), .w = 1 },
+        .w = .{ .x = 0, .y = 0, .z = -(far * near) / (far - near), .w = 0 },
+    };
 }

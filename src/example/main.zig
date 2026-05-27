@@ -20,7 +20,6 @@ pub fn loop(io: std.Io, engine: *Core, window: *m.Window) !void {
     var time: f32 = 0;
     var camera: Camera = .init;
 
-    camera.orientation.rotatePitch(std.math.degreesToRadians(-90));
     camera.distance = 250;
 
     while (!window.state.quit) {

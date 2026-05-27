@@ -256,7 +256,12 @@ pub fn Vec4(comptime T: type) type {
         pub fn normalized(self: Self) Self {
             const reciprocal = 1.0 / self.norm();
             assert(reciprocal > 0.0);
-            return .{ .x = self.x * reciprocal, .y = self.y * reciprocal, .z = self.z * reciprocal, .w = self.w * reciprocal };
+            return .{
+                .x = self.x * reciprocal,
+                .y = self.y * reciprocal,
+                .z = self.z * reciprocal,
+                .w = self.w * reciprocal,
+            };
         }
 
         pub fn flip(self: Self) Self {
@@ -313,7 +318,7 @@ pub fn Vec4(comptime T: type) type {
 test "Vec2 operations" {
     const v1 = Vec2(f32).new(1.0, 2.0);
     const v2 = Vec2(f32).new(3.0, 4.0);
-    
+
     const sum = v1.add(v2);
     try std.testing.expectEqual(@as(f32, 4.0), sum.x);
     try std.testing.expectEqual(@as(f32, 6.0), sum.y);
@@ -325,7 +330,7 @@ test "Vec2 operations" {
 test "Vec3 operations" {
     const v1 = Vec3(f32).new(1.0, 0.0, 0.0);
     const v2 = Vec3(f32).new(0.0, 1.0, 0.0);
-    
+
     const cross = v1.cross(v2);
     try std.testing.expectEqual(@as(f32, 0.0), cross.x);
     try std.testing.expectEqual(@as(f32, 0.0), cross.y);
@@ -338,8 +343,7 @@ test "Vec3 operations" {
 test "Vec4 operations" {
     const v = Vec4(f32).new(1.0, 2.0, 3.0, 4.0);
     const scaled = v.scalarMul(2.0);
-    
+
     try std.testing.expectEqual(@as(f32, 2.0), scaled.x);
     try std.testing.expectEqual(@as(f32, 8.0), scaled.w);
 }
-
