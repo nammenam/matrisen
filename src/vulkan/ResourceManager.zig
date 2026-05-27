@@ -105,14 +105,14 @@ pub const UIInstance = extern struct {
     type: u32,
 };
 
-pub const VertexCount = extern struct {
-    vertexOffset: u32,
-    indexOffset: u32,
-};
+// pub const VertexCount = extern struct {
+//     vertexOffset: u32,
+//     indexOffset: u32,
+// };
 
 pub const DrawCount = u32;
-pub const MeshCount = u32;
-pub const UICount = u32;
+// pub const MeshCount = u32;
+// pub const UICount = u32;
 pub const Position = Vec4;
 pub const Orientation = Quat;
 pub const Transform = DualQuat;
@@ -172,7 +172,7 @@ meshinstance_arena: Arena = undefined,
 uiinstance_arena: Arena = undefined,
 transform_arena: Arena = undefined,
 indirect_arena: Arena = undefined,
-count_arena: Arena = undefined,
+// count_arena: Arena = undefined,
 draw_count: Arena = undefined,
 drawmap_arena: Arena = undefined,
 
@@ -225,7 +225,7 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
             c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         c.VMA_MEMORY_USAGE_GPU_ONLY,
     );
-    self.static_cpu_arena = Arena.init(static_cpu_buf, 0, 0, 128 * 1024 * 1024);
+    self.static_cpu_arena = Arena.init(static_cpu_buf, 0, 128 * 1024 * 1024);
 
     const dynamic_cpu_buf = self.createBuffer(
         64 * 1024 * 1024,
@@ -235,7 +235,6 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     self.dynamic_cpu_arena = Arena.init(
         dynamic_cpu_buf,
         self.getBufferAddress(dynamic_cpu_buf),
-        0,
         64 * 1024 * 1024,
     );
 
@@ -248,7 +247,6 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     self.static_gpu_arena = Arena.init(
         static_gpu_buf,
         self.getBufferAddress(static_gpu_buf),
-        0,
         256 * 1024 * 1024,
     );
 
@@ -261,7 +259,6 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
     self.dynamic_gpu_arena = Arena.init(
         dynamic_gpu_buf,
         self.getBufferAddress(dynamic_gpu_buf),
-        0,
         128 * 1024 * 1024,
     );
 
@@ -270,7 +267,7 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         c.VMA_MEMORY_USAGE_GPU_TO_CPU,
     );
-    self.readback_arena = Arena.init(readback_buf, 0, 0, 16 * 1024 * 1024);
+    self.readback_arena = Arena.init(readback_buf, 0, 16 * 1024 * 1024);
 
     // ====================================================================
     // Static arenas (single-buffered, written once)
@@ -303,7 +300,7 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         );
     }
 
-    self.count_arena = try self.dynamic_gpu_arena.subAllocateArenaTyped(VertexCount, 1, mb);
+    // self.count_arena = try self.dynamic_gpu_arena.subAllocateArenaTyped(VertexCount, 1, mb);
     self.draw_count = try self.dynamic_gpu_arena.subAllocateArenaTyped(DrawCount, 1, mb);
     self.drawmap_arena = try self.dynamic_gpu_arena.subAllocateArenaTyped(u32, MAX_OBJECTS, mb);
 
@@ -351,8 +348,8 @@ pub fn initEngineBuffers(self: *Self, core: *Core, descriptormanager: *Descripto
         &self.global_sampler,
     ));
 
-    self.initEmptyMesh(core, 0) catch @panic("Failed to init empty mesh");
-    self.initEmptyUI(core, 0) catch @panic("Failed to init empty UI");
+    // self.initEmptyMesh(core, 0) catch @panic("Failed to init empty mesh");
+    // self.initEmptyUI(core, 0) catch @panic("Failed to init empty UI");
 }
 
 // ========================================================================
@@ -396,8 +393,8 @@ pub fn updateScene(self: *Self, frame_index: u8, aspect_ratio: f32, camera: Came
     ptr.addresses.uiobjects = self.uiinstance_arena.getFrameBaseAddress(fi);
     ptr.addresses.indirectCommands = self.indirect_arena.getFrameBaseAddress(fi);
 
-    ptr.meshcount = self.meshinstance_arena.countAllocated(MeshInstance);
-    ptr.uielemcount = self.uiinstance_arena.countAllocated(UIInstance);
+    ptr.meshcount = self.getMeshInstanceCount();
+    ptr.uielemcount = self.getUIInstanceCount();
 }
 
 // ========================================================================
@@ -825,19 +822,19 @@ pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) !void {
     );
 
     const instance = MeshInstance{
-        .meshBuffer = self.mesh_arena.getAddressForFrame(Mesh, mesh_slot, 0),
+        .meshBuffer = self.mesh_arena.getFrameAddress(Mesh, mesh_slot, 0),
         .transformIndex = 0,
         .materialIndex = 0,
     };
 
     // Write the instance into every frame slot.
-    const inst_slot = try self.meshinstance_arena.allocateTyped(MeshInstance, 1);
+    const inst_slot = if (size != 0) try self.meshinstance_arena.allocateTyped(MeshInstance, 1) else 0;
     for (0..Core.multibuffering) |fi| {
         self.upload(
             &core.asynccontext,
             std.mem.asBytes(&instance),
             self.meshinstance_arena.buffer,
-            self.meshinstance_arena.getBufferOffsetForFrame(MeshInstance, inst_slot, @intCast(fi)),
+            self.meshinstance_arena.getBufferOffsetForFrame(MeshInstance, inst_slot, fi),
         );
     }
 }
@@ -859,7 +856,7 @@ pub fn initEmptyUI(self: *Self, core: *Core, size: usize) !void {
     );
 
     const instance = UIInstance{
-        .UIBuffer = self.ui_arena.getAddressForFrame(UIElement, ui_slot, 0),
+        .UIBuffer = self.ui_arena.getFrameAddress(UIElement, ui_slot, 0),
         .transformIndex = 0,
         .type = 0,
     };
@@ -870,7 +867,7 @@ pub fn initEmptyUI(self: *Self, core: *Core, size: usize) !void {
             &core.asynccontext,
             std.mem.asBytes(&instance),
             self.uiinstance_arena.buffer,
-            self.uiinstance_arena.getBufferOffsetForFrame(UIInstance, inst_slot, @intCast(fi)),
+            self.uiinstance_arena.getBufferOffsetForFrame(UIInstance, inst_slot, fi),
         );
     }
 }

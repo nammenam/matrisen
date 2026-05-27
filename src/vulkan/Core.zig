@@ -215,8 +215,11 @@ pub fn nextFrame(self: *Self, window: *Window) void {
         }
     };
 
-    // TODO add a funciton in ResourceManager that calculates multibuffer offset for all buffers (maybe generic)
-    const count_offset = @as(u64, self.currentframe) * @sizeOf(ResourceManager.DrawCount);
+    const count_offset = self.resourcemanager.draw_count.getBufferOffsetForFrame(
+        ResourceManager.DrawCount,
+        0, // slot_index is 0 since there is only 1 draw count per frame
+        self.currentframe,
+    );
     // 1. Clear State
     self.recordBufferClears(cmd, count_offset);
     // 2. Compute Culling & Command Generation
@@ -289,10 +292,9 @@ fn recordComputePass(self: *Self, cmd: c.VkCommandBuffer) void {
     c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipelinemanager.get("drawcmdMain"));
 
     // Fixed: Dynamic Dispatch based on exactly how many objects exist
-    // const dispatch_x = (self.resourcemanager.getMeshInstanceCount() + 63) / 64;
-    const dispatch_x = 1;
+    const dispatch_x = (self.resourcemanager.getMeshInstanceCount() + 63) / 64;
     if (dispatch_x > 0) {
-        // c.vkCmdDispatch(cmd, dispatch_x, 1, 1);
+        c.vkCmdDispatch(cmd, dispatch_x, 1, 1);
     }
 
     // Must include SHADER_READ_BIT so the Mesh Shader can safely read drawMap!
@@ -345,20 +347,26 @@ fn recordGraphicsPass(self: *Self, frame: *FrameContext, cmd: c.VkCommandBuffer,
     );
 
     if (config.meshshading) {
-        // const indirect_offset = @as(u64, self.currentframe) *
-        //     ResourceManager.MAX_OBJECTS * @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT);
-        // self.device.vkCmdDrawMeshTasksIndirectCountEXT.?(
-        //     cmd,
-        //     self.resourcemanager.indirect_arena.buffer.buffer,
-        //     indirect_offset,
-        //     self.resourcemanager.draw_count.buffer.buffer,
-        //     count_offset,
-        //     ResourceManager.MAX_OBJECTS,
-        //     @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT),
-        // );
+        const indirect_offset = self.resourcemanager.indirect_arena.getBufferOffsetForFrame(
+            c.VkDrawMeshTasksIndirectCommandEXT,
+            0, // first slot
+            self.currentframe,
+        );
+        self.device.vkCmdDrawMeshTasksIndirectCountEXT.?(
+            cmd,
+            self.resourcemanager.indirect_arena.buffer.buffer,
+            indirect_offset,
+            self.resourcemanager.draw_count.buffer.buffer,
+            count_offset,
+            ResourceManager.MAX_OBJECTS,
+            @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT),
+        );
     } else {
-        const indirect_offset = @as(u64, self.currentframe) *
-            ResourceManager.MAX_OBJECTS * @sizeOf(c.VkDrawIndirectCommand);
+        const indirect_offset = self.resourcemanager.indirect_arena.getBufferOffsetForFrame(
+            c.VkDrawIndirectCommand,
+            0, // first slot
+            self.currentframe,
+        );
         c.vkCmdDrawIndirectCount(
             cmd,
             self.resourcemanager.indirect_arena.buffer.buffer,
@@ -385,8 +393,5 @@ fn recordGraphicsPass(self: *Self, frame: *FrameContext, cmd: c.VkCommandBuffer,
 pub fn updateScene(self: *Self, camera: Camera, time: f32) void {
     const aspect = @as(f32, @floatFromInt(self.drawextent2d.width)) /
         @as(f32, @floatFromInt(self.drawextent2d.height));
-    self.resourcemanager.updateScene(self.currentframe, aspect, camera, time);
-}
-);
     self.resourcemanager.updateScene(self.currentframe, aspect, camera, time);
 }
