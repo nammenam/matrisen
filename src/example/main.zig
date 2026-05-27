@@ -20,7 +20,10 @@ pub fn loop(io: std.Io, engine: *Core, window: *m.Window) !void {
     var time: f32 = 0;
     var camera: Camera = .init;
 
-    camera.distance = 250;
+    camera.pivot.x = 125;
+    camera.pivot.y = 125;
+    camera.pivot.z = 100;
+    camera.distance = 1000;
 
     while (!window.state.quit) {
         // const dt = @as(f32, @floatFromInt(t.untilNow(io, .awake).toNanoseconds())) / 1_000_000_000;
@@ -47,6 +50,8 @@ pub fn main(init: std.process.Init) !void {
 
     try engine.resourcemanager.initEngineBuffers(&engine, &engine.descriptormanager);
     try engine.resourcemanager.initEmptyMesh(&engine, 256 * 256);
-    // try engine.resourcemanager.testUI(&engine);
+    try engine.resourcemanager.testUI(&engine);
+    std.debug.print("number of ui instances: {}\n", .{engine.resourcemanager.getUIInstanceCount()});
+    std.debug.print("number of mesh instances: {}\n", .{engine.resourcemanager.getMeshInstanceCount()});
     try loop(io, &engine, &window);
 }

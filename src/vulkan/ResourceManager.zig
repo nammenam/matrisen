@@ -73,6 +73,14 @@ pub const Vertex = extern struct {
     color: Vec4 = .zeros,
 };
 
+pub const UIVertex = extern struct {
+    position: Vec3 = .zeros,
+    normal: u32 = 0,
+    uv: Vec2 = .zeros,
+    color: u32 = 0,
+    tangent: u32 = 0,
+};
+
 pub const BoundingBox = extern struct {
     center: Vec3 = .zeros,
     theta: f32 = 0,
@@ -81,28 +89,33 @@ pub const BoundingBox = extern struct {
 };
 
 pub const Mesh = extern struct {
-    vertexBuffer: u64,
-    indexBuffer: u64,
+    vertexBuffer: c.VkDeviceAddress,
+    indexBuffer: c.VkDeviceAddress,
     indexCount: u32,
     pad: u32,
 };
 
 pub const UIElement = extern struct {
-    vertexBuffer: u64,
+    vertexBuffer: c.VkDeviceAddress,
     vertexCount: u32,
-    pad: u32,
+    color: u32,
+    size: Vec2,
+    radius: f32,
+    stroke: f32,
 };
 
 pub const MeshInstance = extern struct {
-    meshBuffer: u64, // *Mesh
-    transformIndex: u32,
+    meshBuffer: c.VkDeviceAddress,
+    transformIndex: c.VkDeviceAddress,
     materialIndex: u32,
+    pad: u32,
 };
 
 pub const UIInstance = extern struct {
-    UIBuffer: u64, // *UIElement
-    transformIndex: u32,
+    UIBuffer: c.VkDeviceAddress,
+    transformIndex: c.VkDeviceAddress,
     type: u32,
+    pad: u32,
 };
 
 // pub const VertexCount = extern struct {
@@ -118,8 +131,6 @@ pub const Orientation = Quat;
 pub const Transform = DualQuat;
 
 pub const DeviceBufferAddresses = extern struct {
-    transforms: c.VkDeviceAddress,
-    cpu_transforms: c.VkDeviceAddress,
     meshes: c.VkDeviceAddress,
     uiobjects: c.VkDeviceAddress,
     indirectCommands: c.VkDeviceAddress,
@@ -374,7 +385,8 @@ pub fn updateScene(self: *Self, frame_index: u8, aspect_ratio: f32, camera: Came
     var ptr = @as(*SceneData, @ptrCast(@alignCast(self.scenebuffers[frame_index].info.pMappedData.?)));
 
     const view = camera.view();
-    var proj = Camera.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.1, 1000.0);
+    // var proj = Camera.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.1, 10000.0);
+    var proj = Camera.orthographic(200.0, aspect_ratio, -1.0, 10000.0);
     ptr.viewproj = proj.mul(view);
 
     ptr.ambient_color = Vec4.new(1.0, 1.0, 1.0, 1.0);
@@ -385,8 +397,6 @@ pub fn updateScene(self: *Self, frame_index: u8, aspect_ratio: f32, camera: Came
     const fi: u32 = frame_index;
 
     // Each arena already knows its slot_stride and root address — just ask it.
-    ptr.addresses.transforms = self.transform_arena.getFrameBaseAddress(fi);
-    ptr.addresses.cpu_transforms = self.cputransform_arena.getFrameBaseAddress(fi);
     ptr.addresses.drawcount = self.draw_count.getFrameBaseAddress(fi);
     ptr.addresses.drawMap = self.drawmap_arena.getFrameBaseAddress(fi);
     ptr.addresses.meshes = self.meshinstance_arena.getFrameBaseAddress(fi);
@@ -818,13 +828,14 @@ pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) !void {
         &core.asynccontext,
         std.mem.asBytes(&mesh),
         self.mesh_arena.buffer,
-        self.mesh_arena.getBufferOffsetForFrame(Mesh, mesh_slot, 0),
+        self.mesh_arena.getBufferOffset(Mesh, mesh_slot, 0),
     );
 
     const instance = MeshInstance{
         .meshBuffer = self.mesh_arena.getFrameAddress(Mesh, mesh_slot, 0),
         .transformIndex = 0,
         .materialIndex = 0,
+        .pad = 0,
     };
 
     // Write the instance into every frame slot.
@@ -834,7 +845,7 @@ pub fn initEmptyMesh(self: *Self, core: *Core, size: usize) !void {
             &core.asynccontext,
             std.mem.asBytes(&instance),
             self.meshinstance_arena.buffer,
-            self.meshinstance_arena.getBufferOffsetForFrame(MeshInstance, inst_slot, fi),
+            self.meshinstance_arena.getBufferOffset(MeshInstance, inst_slot, fi),
         );
     }
 }
@@ -852,13 +863,14 @@ pub fn initEmptyUI(self: *Self, core: *Core, size: usize) !void {
         &core.asynccontext,
         std.mem.asBytes(&elem),
         self.ui_arena.buffer,
-        self.ui_arena.getBufferOffsetForFrame(UIElement, ui_slot, 0),
+        self.ui_arena.getBufferOffset(UIElement, ui_slot, 0),
     );
 
     const instance = UIInstance{
         .UIBuffer = self.ui_arena.getFrameAddress(UIElement, ui_slot, 0),
         .transformIndex = 0,
         .type = 0,
+        .pad = 0,
     };
 
     const inst_slot = try self.uiinstance_arena.allocateTyped(UIInstance, 1);
@@ -867,60 +879,119 @@ pub fn initEmptyUI(self: *Self, core: *Core, size: usize) !void {
             &core.asynccontext,
             std.mem.asBytes(&instance),
             self.uiinstance_arena.buffer,
-            self.uiinstance_arena.getBufferOffsetForFrame(UIInstance, inst_slot, fi),
+            self.uiinstance_arena.getBufferOffset(UIInstance, inst_slot, fi),
         );
     }
 }
 
 pub fn testUI(self: *Self, core: *Core) !void {
-    const letter_A_curves = [_]Vertex{
-        // Left leg
-        .{ .position = .{ .x = 100, .y = 100, .z = 0 } },
-        .{ .position = .{ .x = 200, .y = 300, .z = 0 } },
-        .{ .position = .{ .x = 300, .y = 500, .z = 0 } },
-        // Right leg
-        .{ .position = .{ .x = 300, .y = 500, .z = 0 } },
-        .{ .position = .{ .x = 400, .y = 300, .z = 0 } },
-        .{ .position = .{ .x = 500, .y = 100, .z = 0 } },
-        // Crossbar
-        .{ .position = .{ .x = 200, .y = 300, .z = 0 } },
-        .{ .position = .{ .x = 300, .y = 300, .z = 0 } },
-        .{ .position = .{ .x = 400, .y = 300, .z = 0 } },
+    const UI_TYPE_ANALYTICAL = 0;
+    const UI_TYPE_STROKE = 1;
+    const UI_TYPE_FILL = 2;
+
+    // 1. ANALYTICAL RECTANGLE
+    const rect_asset = try self.createUIAnalyticalAsset(core, .{ .x = 100, .y = 100 }, 0x80FFFFFF, 10.0, 0.0);
+    _ = try self.spawnUIInstance(core, rect_asset, UI_TYPE_ANALYTICAL, .fromTranslationRotation(.new(0, 0, 0), .identity));
+
+    // 2. STROKED LETTER 'A'
+    const letter_A_curves = [_]UIVertex{
+        .{ .position = .{ .x = 20, .y = 20, .z = 0 } },
+        .{ .position = .{ .x = 80, .y = 120, .z = 0 } },
+        .{ .position = .{ .x = 150, .y = 20, .z = 0 } },
     };
+    const stroke_asset = try self.createUIVectorAsset(core, &letter_A_curves, 0xFFFFFFFF, 4.0);
+    _ = try self.spawnUIInstance(core, stroke_asset, UI_TYPE_STROKE, .fromTranslationRotation(.new(0, 50, 0), .identity));
 
-    const UI_TYPE_BEZIER_CURVE = 1;
-    const vertex_count: u32 = @intCast(letter_A_curves.len);
-
-    const v_slot = try self.vertex_arena.allocate(@intCast(vertex_count * @sizeOf(Vertex)));
-    const ui_slot = try self.ui_arena.allocateTyped(UIElement, 1);
-
-    self.upload(&core.asynccontext, std.mem.sliceAsBytes(&letter_A_curves), self.vertex_arena.buffer, v_slot);
-
-    const elem = UIElement{
-        .vertexBuffer = self.vertex_arena.getAddress(v_slot),
-        .vertexCount = vertex_count,
-        .pad = 0,
+    // 3. FILLED TRIANGLE
+    const closed_shape = [_]UIVertex{
+        .{ .position = .{ .x = 500, .y = 400, .z = 0 } },
+        .{ .position = .{ .x = 700, .y = 400, .z = 0 } },
+        .{ .position = .{ .x = 600, .y = 600, .z = 0 } },
     };
-    self.upload(
-        &core.asynccontext,
-        std.mem.asBytes(&elem),
-        self.ui_arena.buffer,
-        self.ui_arena.getBufferOffsetForFrame(UIElement, ui_slot, 0),
-    );
+    const fill_asset = try self.createUIVectorAsset(core, &closed_shape, 0xFF00FF00, 0.0);
+    _ = try self.spawnUIInstance(core, fill_asset, UI_TYPE_FILL, .fromTranslationRotation(.new(0, 100, 0), .identity));
+}
 
-    const instance = UIInstance{
-        .UIBuffer = self.ui_arena.getAddressForFrame(UIElement, ui_slot, 0),
-        .transformIndex = 0,
-        .type = UI_TYPE_BEZIER_CURVE,
-    };
-
+// Returns an ID (or pointer) so you can update the transform later!
+pub fn spawnUIInstance(
+    self: *Self,
+    core: *Core,
+    asset_bda: c.VkDeviceAddress,
+    ui_type: u32,
+    initial_transform: Transform,
+) !u32 {
+    // 1. Allocate dynamic slots for all frames
+    const t_slot = try self.transform_arena.allocateTyped(Transform, 1);
     const inst_slot = try self.uiinstance_arena.allocateTyped(UIInstance, 1);
+
+    // 2. Loop through all frames and wire the BDA pointers together safely
     for (0..Core.multibuffering) |fi| {
+        // Upload the transform
+        self.upload(
+            &core.asynccontext,
+            std.mem.asBytes(&initial_transform),
+            self.transform_arena.buffer,
+            self.transform_arena.getBufferOffset(Transform, t_slot, fi),
+        );
+
+        // Get the specific BDA for this frame's transform
+        const frame_transform_bda = self.transform_arena.getFrameAddress(Transform, t_slot, fi);
+
+        // Build and upload the instance pointing to the static asset and dynamic transform
+        const instance = UIInstance{
+            .UIBuffer = asset_bda,
+            .transformIndex = frame_transform_bda,
+            .type = ui_type,
+            .pad = 0,
+        };
+
         self.upload(
             &core.asynccontext,
             std.mem.asBytes(&instance),
             self.uiinstance_arena.buffer,
-            self.uiinstance_arena.getBufferOffsetForFrame(UIInstance, inst_slot, @intCast(fi)),
+            self.uiinstance_arena.getBufferOffset(UIInstance, inst_slot, fi),
         );
     }
+
+    return inst_slot; // Game code uses this ID to update the transform later
+}
+
+pub fn createUIAnalyticalAsset(self: *Self, core: *Core, size: Vec2, color: u32, radius: f32, stroke: f32) !c.VkDeviceAddress {
+    const ui_slot = try self.ui_arena.allocateTyped(UIElement, 1);
+    const elem = UIElement{
+        .vertexBuffer = 0,
+        .vertexCount = 0,
+        .color = color,
+        .size = size,
+        .radius = radius,
+        .stroke = stroke,
+    };
+
+    self.upload(&core.asynccontext, std.mem.asBytes(&elem), self.ui_arena.buffer, self.ui_arena.getBufferOffset(UIElement, ui_slot, 0));
+
+    // FIXED: Use typed getFrameAddress so the pointer offset is calculated correctly!
+    return self.ui_arena.getFrameAddress(UIElement, ui_slot, 0);
+}
+
+pub fn createUIVectorAsset(self: *Self, core: *Core, vertices: []const UIVertex, color: u32, stroke: f32) !c.VkDeviceAddress {
+    // Untyped allocation (returns a byte offset)
+    const v_slot = try self.vertex_arena.allocate(@intCast(vertices.len * @sizeOf(UIVertex)));
+    self.upload(&core.asynccontext, std.mem.sliceAsBytes(vertices), self.vertex_arena.buffer, v_slot);
+
+    // Typed allocation (returns an index)
+    const ui_slot = try self.ui_arena.allocateTyped(UIElement, 1);
+    const elem = UIElement{
+        // FIXED: Safely fetch the untyped byte offset address
+        .vertexBuffer = self.vertex_arena.getFrameAddress(u8, v_slot, 0),
+        .vertexCount = @intCast(vertices.len),
+        .color = color,
+        .size = .zeros,
+        .radius = 0.0,
+        .stroke = stroke,
+    };
+
+    self.upload(&core.asynccontext, std.mem.asBytes(&elem), self.ui_arena.buffer, self.ui_arena.getBufferOffset(UIElement, ui_slot, 0));
+
+    // FIXED: Use typed getFrameAddress
+    return self.ui_arena.getFrameAddress(UIElement, ui_slot, 0);
 }

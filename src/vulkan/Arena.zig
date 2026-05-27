@@ -158,7 +158,7 @@ pub const Arena = struct {
     /// Use this for VkBufferCopy.dstOffset etc.
     ///
     ///   vkbuffer_offset = getAddressForFrame(...) - buffer_base_address
-    pub fn getBufferOffsetForFrame(
+    pub fn getBufferOffset(
         self: *const Arena,
         comptime T: type,
         slot_index: usize,

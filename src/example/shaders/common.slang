@@ -22,15 +22,17 @@ public struct Vertex {
 };
 
 public struct UIVertex {
-  public float3 position;
-  public uint normal;
-  public float2 uv;
-  public uint color;
-  public uint tangent;
-};
+    public float3 position;
+    public uint normal;
+    public float2 uv;
+    public uint color;
+    public uint tangent;
+}; // Total: 32 bytes
 
+// TODO fix this
 public struct Transform {
-  public float4x4 modelMatrix;
+  public float4 real;
+  public float4 dual;
 };
 
 public struct BoundingBox {
@@ -41,9 +43,12 @@ public struct BoundingBox {
 };
 
 public struct UIElement {
-  public Vertex *vertexBuffer; // TODO use UIVertex instead
-  public uint vertexCount;     // number of vertices
-  public uint pad;
+  public UIVertex *vertexBuffer;
+  public uint vertexCount;
+  public uint color;
+  public float2 size;
+  public float radius;
+  public float stroke;
 };
 
 public struct Mesh {
@@ -55,24 +60,19 @@ public struct Mesh {
 
 public struct UIInstance {
   public UIElement *UIBuffer; // two levels of lookup, first ui then vertex
-  public uint transformIndex;
-  // Packing the state!
-  // Bits 0-7:   Type (0=Rect, 1=Circle, 2=Line, 3=Bezier)
-  // Bits 8-15:  Flags (1=Filled, 2=Hovered, 4=Disabled)
-  // Bits 16-31: Material/Style Index (Points to a buffer with colors/thickness)
+  public Transform *transform;
   public uint type;
-  // public float thickness; // For lines can be separate buffer for reuse
+  public uint pad;
 };
 
 public struct MeshInstance {
   public Mesh *meshBuffer; // two levels of lookup, first meshbuffer then vertex
-  public uint transformIndex;
+  public Transform *transform;
   public uint materialIndex; // can be arbitrarly packed
+  public uint pad;
 };
 
 public struct DeviceBufferAddresses {
-  public Transform *transforms;     // written by gpu (can be written by cpu)
-  public Transform *cpu_transforms; // written by cpu only
   public MeshInstance *meshes;      // written by cpu (and gpu?)
   public UIInstance *uiobjects;     // written by cpu (and gpu?)
 #if USE_MESH_SHADING
@@ -104,3 +104,15 @@ public ConstantBuffer<SceneData> scene;
 
 [[vk::binding(0, 1)]]
 public Sampler2D globalTextures[];
+
+
+// DualQuat transformation helper
+public float3 applyDualQuat(Transform t, float3 pos) {
+    // Dual Quaternion transformation:
+    // NewPos = RealPart * pos * conj(RealPart) + 2 * DualPart * conj(RealPart)
+    float3 r = t.real.xyz;
+    float3 d = t.dual.xyz;
+
+    // Standard DualQuat rotation + translation
+    return pos + 2.0 * cross(r, cross(r, pos) + t.real.w * pos) + 2.0 * (t.real.w * d - t.dual.w * r + cross(r, d));
+}

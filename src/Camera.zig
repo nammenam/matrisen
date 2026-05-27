@@ -37,8 +37,8 @@ pub fn firstPerson(self: *Self, window: *Window) void {
     if (window.state.q) self.pivot.translateWorldZ(-0.1);
     if (window.state.e) self.pivot.translateWorldZ(0.1);
     if (window.state.capturemouse) {
-        self.orientation.rotatePitch(-window.state.mouse_y / 150);
-        self.orientation.rotateWorldZ(-window.state.mouse_x / 150);
+        self.orientation.rotatePitch(window.state.mouse_y / 150);
+        self.orientation.rotateWorldZ(window.state.mouse_x / 150);
     }
     self.position = self.pivot;
 }
@@ -51,8 +51,8 @@ pub fn orbit(self: *Self, window: *Window) void {
     if (window.state.q) self.pivot.translateWorldZ(-0.1);
     if (window.state.e) self.pivot.translateWorldZ(0.1);
     if (window.state.capturemouse) {
-        self.orientation.rotatePitch(-window.state.mouse_y / 150);
-        self.orientation.rotateWorldZ(-window.state.mouse_x / 150);
+        self.orientation.rotatePitch(window.state.mouse_y / 150);
+        self.orientation.rotateWorldZ(window.state.mouse_x / 150);
     }
     const local_offset = Vec3{ .x = 0.0, .y = 0.0, .z = self.distance };
     self.position = self.orientation.rotateVec3(local_offset).add(self.pivot);
@@ -60,30 +60,32 @@ pub fn orbit(self: *Self, window: *Window) void {
 
 /// The result matrix maps a Right-Handed, Y-Up view space (looking down -Z)
 /// to a Zero-to-One clipping space.
+/// near, far and fov creates the "box" that we can see, anything outside will
+/// be cut off in the rendering (hidden inside the gpu)
 pub fn perspective(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
-    const f = 1.0 / @tan(fovy_rad / 2.0);
-    const a = f / aspect;
-    const b = -far / (far - near); // Maps -Z to [0, 1]
-    const c = -(far * near) / (far - near);
+    const y = 1.0 / @tan(fovy_rad / 2.0); // 90 deg fov -> y ~= 1 => no distortion
+    const x = y / aspect; // x is longer than y. Needs to be square
+    const z = -far / (far - near); // normalize: [near, far] -> [0, 1]
+    const w = -(far * near) / (far - near); // z offset?
     return .new(
-        .new(a, 0, 0, 0),
-        .new(0, f, 0, 0),
-        .new(0, 0, b, c),
-        .new(0, 0, -1, 0), // w = -z
+        .new(x, 0, 0, 0),
+        .new(0, y, 0, 0),
+        .new(0, 0, z, w),
+        .new(0, 0, -1, 0), // w = -z (becomes perspective divide later in gpu)
     );
 }
 
 /// The result matrix maps a Right-Handed, Y-Up view space (looking down -Z)
 /// to a Zero-to-One clipping space.
-pub fn orthographic(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
-    const f = 1.0 / @tan(fovy_rad / 2.0);
-    const a = f / aspect;
-    const b = -1.0 / (far - near); // Maps -Z to [0, 1]
-    const c = -near / (far - near);
+pub fn orthographic(ortho_height: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
+    const y = 2.0 / ortho_height;
+    const x = 2.0 / (ortho_height * aspect);
+    const z = -1.0 / (far - near); // Maps -Z to [0, 1]
+    const w = -near / (far - near); // ?
     return .new(
-        .new(a, 0, 0, 0),
-        .new(0, f, 0, 0),
-        .new(0, 0, b, c),
+        .new(x, 0, 0, 0),
+        .new(0, y, 0, 0),
+        .new(0, 0, z, w),
         .new(0, 0, 0, 1), // Ortho has no perspective divide
     );
 }

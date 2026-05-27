@@ -216,7 +216,7 @@ pub fn nextFrame(self: *Self, window: *Window) void {
         }
     };
 
-    const count_offset = self.resourcemanager.draw_count.getBufferOffsetForFrame(
+    const count_offset = self.resourcemanager.draw_count.getBufferOffset(
         ResourceManager.DrawCount,
         0, // slot_index is 0 since there is only 1 draw count per frame
         self.currentframe,
@@ -348,7 +348,7 @@ fn recordGraphicsPass(self: *Self, frame: *FrameContext, cmd: c.VkCommandBuffer,
     );
 
     if (config.meshshading) {
-        const indirect_offset = self.resourcemanager.indirect_arena.getBufferOffsetForFrame(
+        const indirect_offset = self.resourcemanager.indirect_arena.getBufferOffset(
             c.VkDrawMeshTasksIndirectCommandEXT,
             0, // first slot
             self.currentframe,
@@ -363,7 +363,7 @@ fn recordGraphicsPass(self: *Self, frame: *FrameContext, cmd: c.VkCommandBuffer,
             @sizeOf(c.VkDrawMeshTasksIndirectCommandEXT),
         );
     } else {
-        const indirect_offset = self.resourcemanager.indirect_arena.getBufferOffsetForFrame(
+        const indirect_offset = self.resourcemanager.indirect_arena.getBufferOffset(
             c.VkDrawIndirectCommand,
             0, // first slot
             self.currentframe,
@@ -380,7 +380,7 @@ fn recordGraphicsPass(self: *Self, frame: *FrameContext, cmd: c.VkCommandBuffer,
     }
     if (config.meshshading) {
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipelinemanager.get("uiMesh"));
-        // self.device.vkCmdDrawMeshTasksEXT.?(cmd, self.resourcemanager.getUIInstanceCount(), 1, 1);
+        self.device.vkCmdDrawMeshTasksEXT.?(cmd, self.resourcemanager.getUIInstanceCount(), 1, 1);
     } else {
         // TODO currently this is manually passsing the ids needed to find the right mesh and ui element
         // need to find a way to automatically pass the right info maybe draw indirect
