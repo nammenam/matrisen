@@ -30,8 +30,8 @@ pub const init: Self = .{
 };
 
 pub fn firstPerson(self: *Self, window: *Window) void {
-    if (window.state.w) self.pivot.translateForward(&self.orientation, 0.1);
-    if (window.state.s) self.pivot.translateForward(&self.orientation, -0.1);
+    if (window.state.w) self.pivot.translateForward(&self.orientation, -0.1);
+    if (window.state.s) self.pivot.translateForward(&self.orientation, 0.1);
     if (window.state.a) self.pivot.translatePitch(&self.orientation, -0.1);
     if (window.state.d) self.pivot.translatePitch(&self.orientation, 0.1);
     if (window.state.q) self.pivot.translateWorldZ(-0.1);
@@ -44,8 +44,8 @@ pub fn firstPerson(self: *Self, window: *Window) void {
 }
 
 pub fn orbit(self: *Self, window: *Window) void {
-    if (window.state.w) self.pivot.translateForward(&self.orientation, 0.1);
-    if (window.state.s) self.pivot.translateForward(&self.orientation, -0.1);
+    if (window.state.w) self.pivot.translateForward(&self.orientation, -0.1);
+    if (window.state.s) self.pivot.translateForward(&self.orientation, 0.1);
     if (window.state.a) self.pivot.translatePitch(&self.orientation, -0.1);
     if (window.state.d) self.pivot.translatePitch(&self.orientation, 0.1);
     if (window.state.q) self.pivot.translateWorldZ(-0.1);
@@ -54,22 +54,35 @@ pub fn orbit(self: *Self, window: *Window) void {
         self.orientation.rotatePitch(-window.state.mouse_y / 150);
         self.orientation.rotateWorldZ(-window.state.mouse_x / 150);
     }
-    const local_offset = Vec3{ .x = 0.0, .y = 0.0, .z = -self.distance };
+    const local_offset = Vec3{ .x = 0.0, .y = 0.0, .z = self.distance };
     self.position = self.orientation.rotateVec3(local_offset).add(self.pivot);
 }
 
 /// The result matrix maps a Right-Handed, Y-Up view space (looking down -Z)
 /// to a Zero-to-One clipping space.
+pub fn perspective(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
+    const f = 1.0 / @tan(fovy_rad / 2.0);
+    const a = f / aspect;
+    const b = -far / (far - near); // Maps -Z to [0, 1]
+    const c = -(far * near) / (far - near);
+    return .new(
+        .new(a, 0, 0, 0),
+        .new(0, f, 0, 0),
+        .new(0, 0, b, c),
+        .new(0, 0, -1, 0), // w = -z
+    );
+}
+
 // pub fn perspective(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
 //     const f = 1.0 / @tan(fovy_rad / 2.0);
 //     const a = f / aspect;
-//     const b = -far / (far - near); // Maps -Z to [0, 1]
+//     const b = far / (far - near); // Maps -Z to [0, 1]
 //     const c = -(far * near) / (far - near);
 //     return .new(
 //         .new(a, 0, 0, 0),
 //         .new(0, f, 0, 0),
 //         .new(0, 0, b, c),
-//         .new(0, 0, -1, 0), // w = -z
+//         .new(0, 0, 1, 0), // w = -z
 //     );
 // }
 
@@ -104,6 +117,24 @@ pub fn orthographic(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
 //     );
 // }
 
+// pub fn view(cam: Self) Mat4x4 {
+//     var orientation = cam.orientation;
+//     const r = orientation.pitchAxis(); // Right vector
+//     const u = orientation.yawAxis(); // Up vector
+//     const f = orientation.rollAxis(); // Forward vector
+//     return .{
+//         .x = .{ .x = r.x, .y = u.x, .z = -f.x, .w = 0 },
+//         .y = .{ .x = r.y, .y = u.y, .z = -f.y, .w = 0 },
+//         .z = .{ .x = r.z, .y = u.z, .z = -f.z, .w = 0 },
+//         .w = .{
+//             .x = -r.dot(cam.position),
+//             .y = -u.dot(cam.position),
+//             .z = f.dot(cam.position), // Positive because we look down -Z
+//             .w = 1,
+//         },
+//     };
+// }
+
 pub fn view(cam: Self) Mat4x4 {
     const rotation = cam.orientation.inverse().toMat4x4();
     const translation = Mat4x4.translation(.{
@@ -112,14 +143,4 @@ pub fn view(cam: Self) Mat4x4 {
         .z = -cam.position.z,
     });
     return rotation.mul(translation);
-}
-
-pub fn perspective(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
-    const f = 1.0 / @tan(fovy_rad / 2.0);
-    return .{
-        .x = .{ .x = f / aspect, .y = 0, .z = 0, .w = 0 },
-        .y = .{ .x = 0, .y = f, .z = 0, .w = 0 },
-        .z = .{ .x = 0, .y = 0, .z = far / (far - near), .w = 1 },
-        .w = .{ .x = 0, .y = 0, .z = -(far * near) / (far - near), .w = 0 },
-    };
 }
