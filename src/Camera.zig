@@ -73,19 +73,6 @@ pub fn perspective(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
     );
 }
 
-// pub fn perspective(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
-//     const f = 1.0 / @tan(fovy_rad / 2.0);
-//     const a = f / aspect;
-//     const b = far / (far - near); // Maps -Z to [0, 1]
-//     const c = -(far * near) / (far - near);
-//     return .new(
-//         .new(a, 0, 0, 0),
-//         .new(0, f, 0, 0),
-//         .new(0, 0, b, c),
-//         .new(0, 0, 1, 0), // w = -z
-//     );
-// }
-
 /// The result matrix maps a Right-Handed, Y-Up view space (looking down -Z)
 /// to a Zero-to-One clipping space.
 pub fn orthographic(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
@@ -100,40 +87,6 @@ pub fn orthographic(fovy_rad: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
         .new(0, 0, 0, 1), // Ortho has no perspective divide
     );
 }
-
-// pub fn view(self: Self) Mat4x4 {
-//     const rotation = self.orientation.inverse().toMat4x4();
-//     const translation = Mat4x4.translation(.{
-//         .x = -self.position.x,
-//         .y = -self.position.y,
-//         .z = -self.position.z,
-//     });
-//     const wv = rotation.mul(translation);
-//     return .new(
-//         .new(wv.x.x, wv.x.z, -wv.x.y, wv.x.w),
-//         .new(wv.y.x, wv.y.z, -wv.y.y, wv.y.w),
-//         .new(wv.z.x, wv.z.z, -wv.z.y, wv.z.w),
-//         .new(wv.w.x, wv.w.z, -wv.w.y, wv.w.w),
-//     );
-// }
-
-// pub fn view(cam: Self) Mat4x4 {
-//     var orientation = cam.orientation;
-//     const r = orientation.pitchAxis(); // Right vector
-//     const u = orientation.yawAxis(); // Up vector
-//     const f = orientation.rollAxis(); // Forward vector
-//     return .{
-//         .x = .{ .x = r.x, .y = u.x, .z = -f.x, .w = 0 },
-//         .y = .{ .x = r.y, .y = u.y, .z = -f.y, .w = 0 },
-//         .z = .{ .x = r.z, .y = u.z, .z = -f.z, .w = 0 },
-//         .w = .{
-//             .x = -r.dot(cam.position),
-//             .y = -u.dot(cam.position),
-//             .z = f.dot(cam.position), // Positive because we look down -Z
-//             .w = 1,
-//         },
-//     };
-// }
 
 pub fn view(cam: Self) Mat4x4 {
     const rotation = cam.orientation.inverse().toMat4x4();
