@@ -385,8 +385,8 @@ pub fn updateScene(self: *Self, frame_index: u8, aspect_ratio: f32, camera: Came
     var ptr = @as(*SceneData, @ptrCast(@alignCast(self.scenebuffers[frame_index].info.pMappedData.?)));
 
     const view = camera.view();
-    // var proj = Camera.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.1, 10000.0);
-    var proj = Camera.orthographic(200.0, aspect_ratio, -1.0, 10000.0);
+    var proj = Camera.perspective(std.math.degreesToRadians(60.0), aspect_ratio, 0.1, 10000.0);
+    // var proj = Camera.orthographic(200.0, aspect_ratio, -1.0, 10000.0);
     ptr.viewproj = proj.mul(view);
 
     ptr.ambient_color = Vec4.new(1.0, 1.0, 1.0, 1.0);
@@ -890,8 +890,13 @@ pub fn testUI(self: *Self, core: *Core) !void {
     const UI_TYPE_FILL = 2;
 
     // 1. ANALYTICAL RECTANGLE
-    const rect_asset = try self.createUIAnalyticalAsset(core, .{ .x = 100, .y = 100 }, 0x80FFFFFF, 10.0, 0.0);
-    _ = try self.spawnUIInstance(core, rect_asset, UI_TYPE_ANALYTICAL, .fromTranslationRotation(.new(0, 0, 0), .identity));
+    const rect_asset = try self.createUIAnalyticalAsset(core, .{ .x = 100, .y = 100 }, 0xFFFFFFFF, 50.0, 0.0);
+    _ = try self.spawnUIInstance(
+        core,
+        rect_asset,
+        UI_TYPE_ANALYTICAL,
+        .fromTranslationRotation(.new(0, 300, 700), .identity),
+    );
 
     // 2. STROKED LETTER 'A'
     const letter_A_curves = [_]UIVertex{
@@ -900,7 +905,12 @@ pub fn testUI(self: *Self, core: *Core) !void {
         .{ .position = .{ .x = 150, .y = 20, .z = 0 } },
     };
     const stroke_asset = try self.createUIVectorAsset(core, &letter_A_curves, 0xFFFFFFFF, 4.0);
-    _ = try self.spawnUIInstance(core, stroke_asset, UI_TYPE_STROKE, .fromTranslationRotation(.new(0, 50, 0), .identity));
+    _ = try self.spawnUIInstance(
+        core,
+        stroke_asset,
+        UI_TYPE_STROKE,
+        .fromTranslationRotation(.new(0, 50, 0), .identity),
+    );
 
     // 3. FILLED TRIANGLE
     const closed_shape = [_]UIVertex{
@@ -909,7 +919,12 @@ pub fn testUI(self: *Self, core: *Core) !void {
         .{ .position = .{ .x = 600, .y = 600, .z = 0 } },
     };
     const fill_asset = try self.createUIVectorAsset(core, &closed_shape, 0xFF00FF00, 0.0);
-    _ = try self.spawnUIInstance(core, fill_asset, UI_TYPE_FILL, .fromTranslationRotation(.new(0, 100, 0), .identity));
+    _ = try self.spawnUIInstance(
+        core,
+        fill_asset,
+        UI_TYPE_FILL,
+        .fromTranslationRotation(.new(0, 100, 0), .identity),
+    );
 }
 
 // Returns an ID (or pointer) so you can update the transform later!
@@ -967,9 +982,12 @@ pub fn createUIAnalyticalAsset(self: *Self, core: *Core, size: Vec2, color: u32,
         .stroke = stroke,
     };
 
-    self.upload(&core.asynccontext, std.mem.asBytes(&elem), self.ui_arena.buffer, self.ui_arena.getBufferOffset(UIElement, ui_slot, 0));
+    self.upload(&core.asynccontext, std.mem.asBytes(&elem), self.ui_arena.buffer, self.ui_arena.getBufferOffset(
+        UIElement,
+        ui_slot,
+        0,
+    ));
 
-    // FIXED: Use typed getFrameAddress so the pointer offset is calculated correctly!
     return self.ui_arena.getFrameAddress(UIElement, ui_slot, 0);
 }
 
@@ -990,8 +1008,12 @@ pub fn createUIVectorAsset(self: *Self, core: *Core, vertices: []const UIVertex,
         .stroke = stroke,
     };
 
-    self.upload(&core.asynccontext, std.mem.asBytes(&elem), self.ui_arena.buffer, self.ui_arena.getBufferOffset(UIElement, ui_slot, 0));
+    self.upload(
+        &core.asynccontext,
+        std.mem.asBytes(&elem),
+        self.ui_arena.buffer,
+        self.ui_arena.getBufferOffset(UIElement, ui_slot, 0),
+    );
 
-    // FIXED: Use typed getFrameAddress
     return self.ui_arena.getFrameAddress(UIElement, ui_slot, 0);
 }

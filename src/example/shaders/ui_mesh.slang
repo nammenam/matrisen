@@ -17,6 +17,8 @@ import uiprocedures;
 #define UI_TYPE_STROKE 1     // Extruded paths: Bezier borders, Line graphs
 #define UI_TYPE_FILL 2       // Vector Graphics: Fonts, SVGs, Winding rules
 
+#define UI_FLAG_WORLD_SPACE 0
+
 #define MAX_VERTS 64
 #define MAX_PRIMS 64
 
@@ -26,13 +28,11 @@ void emitAnalyticalQuad(uint elementIndex, // Pass this down from uiMesh!
                         out vertices UIVaryings verts[MAX_VERTS]) {
   // We only have 1 UI element, so we promise exactly 1 Quad.
   // Thread 0 tells the hardware the exact counts: 4 vertices, 2 primitives.
+  // TODO batch workgroup to handle multiple of same type
   if (localID == 0) {
     SetMeshOutputCounts(4, 2);
   }
 
-  // -----------------------------------------------------
-  // 4 THREADS WRITE VERTICES
-  // -----------------------------------------------------
   if (localID < 4) {
     float2 signs = float2(((localID & 1) != 0) ? 1.0 : -1.0,
                           ((localID & 2) != 0) ? 1.0 : -1.0);
@@ -41,26 +41,25 @@ void emitAnalyticalQuad(uint elementIndex, // Pass this down from uiMesh!
     float2 paddedSize = ui.size + float2(padding * 2.0, padding * 2.0);
 
     float2 localPixelCoord = signs * (paddedSize / 2.0);
-
-    // Convert to NDC space (Placeholder math until you hook up Transforms)
-    // Adjust the 1000.0/600.0 to match your actual screen half-widths
     Transform t = *instance.transform;
-    float3 worldPos = applyDualQuat(t, float3(localPixelCoord, 0.0));
-    float4 ndcPos = mul(scene.viewproj, float4(worldPos, 1.0));
+    float3 transformedPos = applyDualQuat(t, float3(localPixelCoord, 0.0));
 
+    float4 ndcPos;
+
+    if ((instance.pad & UI_FLAG_WORLD_SPACE) != 0) {
+      ndcPos = mul(scene.viewproj, float4(transformedPos, 1.0));
+    } else {
+      ndcPos.x = transformedPos.x / (scene.viewport.x / 2.0);
+      ndcPos.y = transformedPos.y / (scene.viewport.y / 2.0);
+      ndcPos.z = transformedPos.z;
+      ndcPos.w = 1.0;
+    }
     verts[localID].position = ndcPos;
 
-    // Pass the raw local coordinates for the SDF fragment math
     verts[localID].texcoord = localPixelCoord;
-
-    // Pass routing info to the Fragment Shader
     verts[localID].elementIndex = elementIndex;
     verts[localID].type = instance.type;
   }
-
-  // -----------------------------------------------------
-  // 2 THREADS WRITE PRIMITIVES
-  // -----------------------------------------------------
   if (localID < 2) {
     if (localID == 0) {
       prims[localID] = uint3(0, 1, 2);
