@@ -1,0 +1,12 @@
+fix todos in code -- add them here aswell
+
+start to write documentation in txt files
+
+read otf and extract glyph data
+
+setup slug shader to render glyphs and arbitrary vector graphics
+
+setup loop blin shader to render glyps and arbitrary vector graphics
+https://gpuopen.com/learn/mesh_shaders/mesh_shaders-font_and_vector_art_rendering_with_mesh_shaders/
+
+compare performance of the two (first setup robust benchmarking cpu + gpu only way to actually say anything about performance)
