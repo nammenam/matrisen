@@ -12,3 +12,4 @@ illustrating and animation tasks
 
 - docs
 - src
+- build
