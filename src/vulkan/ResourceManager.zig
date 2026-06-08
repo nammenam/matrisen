@@ -895,7 +895,7 @@ pub fn testUI(self: *Self, core: *Core) !void {
         core,
         rect_asset,
         UI_TYPE_ANALYTICAL,
-        .fromTranslationRotation(.new(0, 300, 700), .identity),
+        .fromTranslationRotation(.new(0, 400, 900), .identity),
     );
 
     // 2. STROKED LETTER 'A'

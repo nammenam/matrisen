@@ -14,7 +14,6 @@ void drawcmdMain(uint3 threadId: SV_DispatchThreadID) {
   if (index_count == 0) {
     return;
   }
-  // TODO: Add actual frustum culling here
   uint drawIndex;
   InterlockedAdd(*scene.addresses.drawcount, 1, drawIndex);
   // --- CONDITIONAL COMPILE BLOCK ---

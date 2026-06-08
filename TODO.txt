@@ -1,0 +1,43 @@
+===================
+OTF AND TTF PARSING
+===================
+
+
+
+
+
+
+===============
+FRUSTUM CULLING
+===============
+
+
+
+
+
+
+
+========
+BUGFIXES
+========
+// TODO FIX this is broken. Make compute shader that creates meshes for this
+// the compute shader is also usefull for the ui meshshaded varient if we want to cahce the mesh
+src/example/shaders/ui.slang:140
+
+
+
+
+
+
+======================
+FORMALIZE SPEC AND API
+======================
+
+
+
+
+
+
+=========================================================
+PLAY AROUND WITH SIMPLE THINGS, GENERATE MESHES AND STUFF
+=========================================================
